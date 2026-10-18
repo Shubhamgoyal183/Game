@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Candy Match – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+  <style>
+    body { background: radial-gradient(circle at 30% 0%, #5b2a86, #1a0f2e 70%); background-color: #1a0f2e; }
+    .panel.scores { max-width: 520px; padding: 10px 14px; }
+    .goal { height: 8px; background: rgba(0,0,0,0.4); border-radius: 999px; overflow: hidden; width: min(92vw, 520px); }
+    .goal div { height: 100%; width: 0; background: linear-gradient(90deg, #f472b6, #facc15); transition: width 0.3s; }
+  </style>
+</head>
+<body class="fullscreen">
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🍬 Candy Match</h1>
+    <span class="spacer"></span>
+  </header>
+  <main class="stage">
+    <div class="panel scores">
+      <div><div class="label">Level</div><div class="value" id="level">1</div></div>
+      <div><div class="label">Score</div><div class="value" id="score">0</div></div>
+      <div><div class="label">Target</div><div class="value" id="target">0</div></div>
+      <div><div class="label">Moves</div><div class="value" id="moves">0</div></div>
+    </div>
+    <div class="goal"><div id="goal"></div></div>
+    <div class="canvas-wrap" id="wrap"><canvas id="game"></canvas></div>
+    <div class="hint" id="hint">Candy ko khiskao (ya do candies par click karo) · 3 milao · 4 = 🎀 striped · 5 = 🍫 bomb</div>
+  </main>
+
+  <div class="modal" id="modal">
+    <div class="panel">
+      <h2 id="mTitle"></h2>
+      <p id="mText"></p>
+      <button class="btn primary" id="mBtn"></button>
+    </div>
+  </div>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const N = 8, CS = 60, W = N * CS, H = N * CS, COLORS = 6;
+      const $ = (id) => document.getElementById(id);
+      const canvas = $("game");
+      const ctx = canvas.getContext("2d");
+      const wrap = $("wrap");
+      if (IS_TOUCH) $("hint").textContent = "Candy ko swipe karo · 3 milao · 4 = 🎀 striped · 5 = 🍫 bomb";
+
+      const FILL = ["#ef4444", "#f97316", "#facc15", "#22c55e", "#3b82f6", "#a855f7"];
+      const DARK = ["#991b1b", "#9a3412", "#a16207", "#166534", "#1e3a8a", "#6b21a8"];
+
+      let grid, level, score, target, moves, busy, sel, nextId = 1, idleT = 0, hint = null, pops = [], combo = 1;
+      level = store.get("candy_level", 1);
+
+      const tile = (color, r, c, special = null) => ({ id: nextId++, color, special, x: c, y: r, scale: 1, removing: false });
+      const randColor = () => Math.floor(Math.random() * COLORS);
+      const at = (r, c) => (r < 0 || c < 0 || r >= N || c >= N ? null : grid[r][c]);
+      const same = (a, b) => a && b && a.special !== "bomb" && b.special !== "bomb" && a.color === b.color;
+
+      function startLevel() {
+        target = 1200 + (level - 1) * 900;
+        moves = 20 + Math.min(8, Math.floor(level / 2));
+        score = 0;
+        busy = false;
+        sel = null;
+        hint = null;
+        pops = [];
+        grid = [];
+        // Shuru mein koi match pehle se bana na ho
+        for (let r = 0; r < N; r++) {
+          grid[r] = [];
+          for (let c = 0; c < N; c++) {
+            let col;
+            do col = randColor();
+            while ((c >= 2 && grid[r][c - 1].color === col && grid[r][c - 2].color === col) ||
+                   (r >= 2 && grid[r - 1][c].color === col && grid[r - 2][c].color === col));
+            grid[r][c] = tile(col, r - N - 1, c); // upar se girte hue aayenge
+          }
+        }
+        if (!hasMoves()) return startLevel();
+        hud();
+        settle();
+      }
+
+      function hud() {
+        $("level").textContent = level;
+        $("score").textContent = score;
+        $("target").textContent = target;
+        $("moves").textContent = moves;
+        $("goal").style.width = Math.min(100, (score / target) * 100) + "%";
+      }
+
+      // ---------- Animation ----------
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      let settleResolve = null;
+      function settle() { return new Promise((r) => (settleResolve = r)); }
+
+      function animate(dt) {
+        let moving = false;
+        for (let r = 0; r < N; r++)
+          for (let c = 0; c < N; c++) {
+            const t = grid[r][c];
+            if (!t) continue;
+            const sp = 11 * dt;
+            if (t.x !== c) { moving = true; t.x += Math.sign(c - t.x) * Math.min(Math.abs(c - t.x), sp); }
+            if (t.y !== r) { moving = true; t.y += Math.sign(r - t.y) * Math.min(Math.abs(r - t.y), sp * 1.3); }
+            if (t.removing && t.scale > 0) { moving = true; t.scale = Math.max(0, t.scale - dt * 6); }
+          }
+        if (!moving && settleResolve) { const f = settleResolve; settleResolve = null; f(); }
+      }
+
+      // ---------- Matching ----------
+      function findRuns() {
+        const runs = [];
+        for (let r = 0; r < N; r++) {
+          let c = 0;
+          while (c < N) {
+            let e = c + 1;
+            while (e < N && same(grid[r][c], grid[r][e])) e++;
+            if (e - c >= 3) runs.push({ cells: Array.from({ length: e - c }, (_, i) => [r, c + i]), dir: "h" });
+            c = e;
+          }
+        }
+        for (let c = 0; c < N; c++) {
+          let r = 0;
+          while (r < N) {
+            let e = r + 1;
+            while (e < N && same(grid[r][c], grid[e][c])) e++;
+            if (e - r >= 3) runs.push({ cells: Array.from({ length: e - r }, (_, i) => [r + i, c]), dir: "v" });
+            r = e;
+          }
+        }
+        return runs;
+      }
+
+      function hasMoves() {
+        for (let r = 0; r < N; r++)
+          for (let c = 0; c < N; c++) {
+            if (grid[r][c]?.special === "bomb") return [[r, c], [r, c + 1 < N ? c + 1 : c - 1]];
+            for (const [dr, dc] of [[0, 1], [1, 0]]) {
+              const r2 = r + dr, c2 = c + dc;
+              if (r2 >= N || c2 >= N) continue;
+              swapCells(r, c, r2, c2);
+              const ok = findRuns().length > 0;
+              swapCells(r, c, r2, c2);
+              if (ok) return [[r, c], [r2, c2]];
+            }
+          }
+        return null;
+      }
+
+      function swapCells(r1, c1, r2, c2) {
+        const t = grid[r1][c1];
+        grid[r1][c1] = grid[r2][c2];
+        grid[r2][c2] = t;
+      }
+
+      // Clear hone wale cells mein special candy ho toh uska asar bhi jodo
+      function expand(clear) {
+        const queue = [...clear];
+        while (queue.length) {
+          const key = queue.pop();
+          const [r, c] = key.split(",").map(Number);
+          const t = grid[r][c];
+          if (!t || t.triggered) continue;
+          let extra = [];
+          if (t.special === "h") extra = Array.from({ length: N }, (_, i) => [r, i]);
+          else if (t.special === "v") extra = Array.from({ length: N }, (_, i) => [i, c]);
+          else if (t.special === "bomb") {
+            const col = randColor();
+            for (let rr = 0; rr < N; rr++) for (let cc = 0; cc < N; cc++) if (grid[rr][cc]?.color === col) extra.push([rr, cc]);
+          }
+          if (t.special) {
+            t.triggered = true;
+            pops.push({ x: c, y: r, text: t.special === "bomb" ? "💥" : "⚡", life: 0.6 });
+          }
+          for (const [er, ec] of extra) {
+            const k = er + "," + ec;
+            if (!clear.has(k)) { clear.add(k); queue.push(k); }
+          }
+        }
+      }
+
+      async function clearCells(clear, creates) {
+        const n = clear.size;
+        const gained = n * 60 * combo;
+        score += gained;
+        let cx = 0, cy = 0;
+        for (const k of clear) {
+          const [r, c] = k.split(",").map(Number);
+          cx += c; cy += r;
+          if (grid[r][c]) grid[r][c].removing = true;
+        }
+        pops.push({ x: cx / n, y: cy / n, text: `+${gained}`, life: 0.9 });
+        sound.beep(500 + combo * 120, 0.12, "sine", 0.07, 900 + combo * 150);
+        hud();
+        await settle();
+        for (const k of clear) {
+          const [r, c] = k.split(",").map(Number);
+          grid[r][c] = null;
+        }
+        for (const cr of creates) grid[cr.r][cr.c] = tile(cr.color, cr.r, cr.c, cr.special);
+        // Gravity: candies neeche girti hain, upar se nayi aati hain
+        for (let c = 0; c < N; c++) {
+          let w = N - 1;
+          for (let r = N - 1; r >= 0; r--) {
+            if (grid[r][c]) {
+              const t = grid[r][c];
+              grid[r][c] = null;
+              grid[w][c] = t;
+              w--;
+            }
+          }
+          for (let r = w, k = 1; r >= 0; r--, k++) grid[r][c] = tile(randColor(), -k, c);
+        }
+        await settle();
+      }
+
+      async function cascade(swapped) {
+        combo = 1;
+        while (true) {
+          const runs = findRuns();
+          if (!runs.length) break;
+          const clear = new Set(), creates = [];
+          for (const run of runs) {
+            run.cells.forEach(([r, c]) => clear.add(r + "," + c));
+            if (run.cells.length >= 4) {
+              const pivot = run.cells.find(([r, c]) => swapped && swapped.some(([sr, sc]) => sr === r && sc === c)) || run.cells[Math.floor(run.cells.length / 2)];
+              const t = grid[pivot[0]][pivot[1]];
+              if (t.special || creates.some((x) => x.r === pivot[0] && x.c === pivot[1])) continue;
+              creates.push({
+                r: pivot[0], c: pivot[1], color: run.cells.length >= 5 ? -1 : t.color,
+                special: run.cells.length >= 5 ? "bomb" : run.dir === "h" ? "v" : "h",
+              });
+            }
+          }
+          expand(clear);
+          for (const cr of creates) clear.add(cr.r + "," + cr.c);
+          await clearCells(clear, creates);
+          combo++;
+          swapped = null;
+        }
+        if (!hasMoves()) await shuffle();
+      }
+
+      async function shuffle() {
+        pops.push({ x: 3.5, y: 3.5, text: "🔀 Shuffle!", life: 1.2 });
+        do {
+          for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (!grid[r][c].special) grid[r][c].color = randColor();
+        } while (findRuns().length || !hasMoves());
+        await wait(500);
+      }
+
+      // ---------- Player move ----------
+      async function trySwap(r1, c1, r2, c2) {
+        if (busy || r2 < 0 || c2 < 0 || r2 >= N || c2 >= N || moves <= 0) return;
+        busy = true;
+        sel = null;
+        hint = null;
+        idleT = 0;
+        const a = grid[r1][c1], b = grid[r2][c2];
+        swapCells(r1, c1, r2, c2);
+        sound.beep(400, 0.05, "triangle", 0.04);
+        await settle();
+
+        if (a.special === "bomb" || b.special === "bomb") {
+          // Bomb jis candy se badla, us rang ki saari candies gayab
+          moves--;
+          const clear = new Set([r1 + "," + c1, r2 + "," + c2]);
+          const other = a.special === "bomb" ? b : a;
+          for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+            const t = grid[r][c];
+            if (other.special === "bomb" || (t && t.color === other.color)) clear.add(r + "," + c);
+          }
+          a.triggered = b.triggered = true;
+          combo = 1;
+          expand(clear);
+          await clearCells(clear, []);
+          await cascade(null);
+        } else if (!findRuns().length) {
+          swapCells(r1, c1, r2, c2); // match nahi bana, wapas
+          sound.beep(200, 0.1, "square", 0.03);
+          await settle();
+        } else {
+          moves--;
+          await cascade([[r1, c1], [r2, c2]]);
+        }
+        hud();
+        busy = false;
+        checkEnd();
+      }
+
+      function checkEnd() {
+        if (score >= target) {
+          const stars = moves >= 8 ? "⭐⭐⭐" : moves >= 4 ? "⭐⭐" : "⭐";
+          store.set("candy_level", level + 1);
+          [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => sound.beep(f, 0.18, "sine", 0.08), i * 110));
+          showModal(`🎉 Level ${level} paar! ${stars}`, `Score: ${score} · ${moves} moves bache`, "Agla level ▶", () => { level++; startLevel(); });
+        } else if (moves <= 0) {
+          sound.beep(220, 0.5, "triangle", 0.07, 110);
+          showModal("😢 Moves khatam!", `Score: ${score} / ${target}. Phir se try karo!`, "Dobara khelo", startLevel);
+        }
+      }
+
+      // ---------- Draw ----------
+      function candyPath(color, s) {
+        ctx.beginPath();
+        switch (color) {
+          case 0: ctx.arc(0, 0, s, 0, Math.PI * 2); break;
+          case 1: { const k = s * 0.85; ctx.roundRect ? ctx.roundRect(-k, -k, k * 2, k * 2, k * 0.5) : ctx.rect(-k, -k, k * 2, k * 2); break; }
+          case 2: ctx.moveTo(0, -s); ctx.lineTo(s, 0); ctx.lineTo(0, s); ctx.lineTo(-s, 0); ctx.closePath(); break;
+          case 3: ctx.ellipse(0, 0, s * 0.75, s, 0, 0, Math.PI * 2); break;
+          case 4: for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2 + Math.PI / 6; ctx.lineTo(Math.cos(a) * s, Math.sin(a) * s); } ctx.closePath(); break;
+          default: for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2 - Math.PI / 2, rr = i % 2 ? s * 0.5 : s; ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); } ctx.closePath();
+        }
+      }
+
+      function drawCandy(t, extraScale = 1) {
+        const x = t.x * CS + CS / 2, y = t.y * CS + CS / 2;
+        const s = CS * 0.36 * t.scale * extraScale;
+        if (s <= 0.5) return;
+        ctx.save();
+        ctx.translate(x, y);
+        if (t.special === "bomb") {
+          ctx.fillStyle = "#3f1d0b";
+          ctx.beginPath(); ctx.arc(0, 0, s, 0, Math.PI * 2); ctx.fill();
+          const now = performance.now() / 600;
+          for (let i = 0; i < 9; i++) {
+            const a = i * 2.4 + now, rr = s * (0.3 + (i % 3) * 0.2);
+            ctx.fillStyle = FILL[i % 6];
+            ctx.beginPath(); ctx.arc(Math.cos(a) * rr, Math.sin(a) * rr, s * 0.13, 0, Math.PI * 2); ctx.fill();
+          }
+          ctx.restore();
+          return;
+        }
+        ctx.fillStyle = "rgba(0,0,0,0.25)";
+        ctx.save(); ctx.translate(2, 3); candyPath(t.color, s); ctx.fill(); ctx.restore();
+        const g = ctx.createRadialGradient(-s * 0.3, -s * 0.3, s * 0.1, 0, 0, s * 1.1);
+        g.addColorStop(0, "#fff");
+        g.addColorStop(0.25, FILL[t.color]);
+        g.addColorStop(1, DARK[t.color]);
+        ctx.fillStyle = g;
+        candyPath(t.color, s);
+        ctx.fill();
+        if (t.special === "h" || t.special === "v") {
+          ctx.save();
+          candyPath(t.color, s);
+          ctx.clip();
+          ctx.fillStyle = "rgba(255,255,255,0.75)";
+          for (let k = -s; k < s; k += s * 0.45) {
+            if (t.special === "h") ctx.fillRect(-s, k, s * 2, s * 0.18);
+            else ctx.fillRect(k, -s, s * 0.18, s * 2);
+          }
+          ctx.restore();
+        }
+        ctx.fillStyle = "rgba(255,255,255,0.55)";
+        ctx.beginPath(); ctx.ellipse(-s * 0.3, -s * 0.4, s * 0.28, s * 0.14, -0.6, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      }
+
+      function draw(dt) {
+        ctx.clearRect(0, 0, W, H);
+        for (let r = 0; r < N; r++)
+          for (let c = 0; c < N; c++) {
+            ctx.fillStyle = (r + c) % 2 ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.16)";
+            ctx.fillRect(c * CS, r * CS, CS, CS);
+          }
+        ctx.save();
+        ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip(); // upar se aati candies board ke bahar na dikhein
+        const now = performance.now() / 1000;
+        for (let r = 0; r < N; r++)
+          for (let c = 0; c < N; c++) {
+            const t = grid[r][c];
+            if (!t) continue;
+            let k = 1;
+            if (hint && hint.some(([hr, hc]) => hr === r && hc === c)) k = 1 + Math.sin(now * 8) * 0.08;
+            drawCandy(t, k);
+          }
+        ctx.restore();
+        if (sel) {
+          ctx.strokeStyle = `rgba(255,255,255,${0.6 + Math.sin(now * 8) * 0.3})`;
+          ctx.lineWidth = 3;
+          ctx.strokeRect(sel[1] * CS + 3, sel[0] * CS + 3, CS - 6, CS - 6);
+        }
+        for (const p of pops) {
+          p.life -= dt;
+          p.y -= dt * 0.8;
+          ctx.globalAlpha = Math.max(0, Math.min(1, p.life * 2));
+          ctx.font = '800 26px "Segoe UI", sans-serif';
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.lineWidth = 6;
+          ctx.strokeStyle = "rgba(60,0,60,0.8)";
+          ctx.strokeText(p.text, p.x * CS + CS / 2, p.y * CS + CS / 2);
+          ctx.fillStyle = "#fde047";
+          ctx.fillText(p.text, p.x * CS + CS / 2, p.y * CS + CS / 2);
+          ctx.globalAlpha = 1;
+        }
+        pops = pops.filter((p) => p.life > 0);
+      }
+
+      // ---------- Input ----------
+      let down = null;
+      const cellOf = (e) => {
+        const p = canvasPoint(canvas, e, W, H);
+        return { r: Math.floor(p.y / CS), c: Math.floor(p.x / CS), x: p.x, y: p.y };
+      };
+      canvas.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        sound.unlock();
+        if (busy) return;
+        const p = cellOf(e);
+        if (p.r < 0 || p.c < 0 || p.r >= N || p.c >= N) return;
+        canvas.setPointerCapture(e.pointerId);
+        // Pehle se chuni candy ke bagal wali par click = swap
+        if (sel && Math.abs(sel[0] - p.r) + Math.abs(sel[1] - p.c) === 1) {
+          const [r, c] = sel;
+          sel = null;
+          trySwap(r, c, p.r, p.c);
+          return;
+        }
+        sel = [p.r, p.c];
+        down = p;
+      });
+      canvas.addEventListener("pointermove", (e) => {
+        if (!down || busy) return;
+        const p = cellOf(e);
+        const dx = p.x - down.x, dy = p.y - down.y;
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < CS * 0.4) return;
+        const [r, c] = [down.r, down.c];
+        down = null;
+        sel = null;
+        if (Math.abs(dx) > Math.abs(dy)) trySwap(r, c, r, c + Math.sign(dx));
+        else trySwap(r, c, r + Math.sign(dy), c);
+      });
+      const up = () => (down = null);
+      canvas.addEventListener("pointerup", up);
+      canvas.addEventListener("pointercancel", up);
+
+      let last = performance.now();
+      function loop(now) {
+        const dt = Math.min((now - last) / 1000, 1 / 30);
+        last = now;
+        animate(dt);
+        if (!busy && !hint) {
+          idleT += dt;
+          if (idleT > 6) hint = hasMoves(); // 6 second kuch nahi kiya toh ishaara
+        }
+        draw(dt);
+        requestAnimationFrame(loop);
+      }
+      document.addEventListener("visibilitychange", () => { last = performance.now(); });
+      const resize = () => fitCanvas(canvas, ctx, wrap, W, H);
+      window.addEventListener("resize", resize);
+      resize();
+      startLevel();
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>

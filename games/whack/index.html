@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Whack-a-Mole – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+  <style>
+    body { user-select: none; -webkit-user-select: none; }
+    .field {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: clamp(10px, 3vw, 18px);
+      width: min(92vw, 440px);
+      padding: clamp(14px, 4vw, 22px);
+      background: linear-gradient(#6fbf4a, #4f9a32);
+      border-radius: 20px;
+      box-shadow: inset 0 -6px 0 rgba(0, 0, 0, 0.15);
+    }
+    .hole {
+      aspect-ratio: 1;
+      position: relative;
+      border-radius: 50%;
+      background: radial-gradient(ellipse at 50% 70%, #3a2414 0 55%, #5a3a20 56% 100%);
+      overflow: hidden;
+      cursor: pointer;
+      touch-action: none;
+    }
+    .mole {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: -100%;
+      height: 100%;
+      display: grid;
+      place-items: center;
+      font-size: clamp(2.4rem, 13vw, 3.6rem);
+      transition: bottom 0.12s ease-out;
+      pointer-events: none;
+    }
+    .hole.up .mole { bottom: 0; }
+    .hole.gold .mole { filter: drop-shadow(0 0 10px gold) saturate(1.6); }
+    .hole.hit .mole { transform: scale(0.8) rotate(-10deg); filter: grayscale(0.6); }
+    .pop {
+      position: absolute;
+      left: 50%;
+      top: 20%;
+      transform: translateX(-50%);
+      font-weight: 800;
+      font-size: 1.3rem;
+      pointer-events: none;
+      animation: rise 0.6s forwards;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+    }
+    @keyframes rise { to { top: -10%; opacity: 0; } }
+    .legend { color: var(--muted); font-size: 0.85rem; text-align: center; }
+    .timebar { height: 8px; background: var(--bg); border-radius: 999px; overflow: hidden; width: min(92vw, 440px); }
+    .timebar div { height: 100%; background: var(--accent); width: 100%; transition: width 0.1s linear; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🔨 Whack-a-Mole</h1>
+    <span class="spacer"></span>
+  </header>
+
+  <main class="stage">
+    <div class="row" id="modeRow">
+      <button class="btn small" data-mode="1p">👤 Solo</button>
+      <button class="btn small" data-mode="2p">👥 2 Players (baari-baari)</button>
+    </div>
+
+    <div class="panel scores" id="scorePanel"></div>
+    <div class="timebar"><div id="timebar"></div></div>
+    <div class="field" id="field"></div>
+    <div class="legend">🐹 = +1 · 🌟🐹 golden = +3 · 💣 mat maarna = −3</div>
+    <button class="btn primary" id="startBtn">▶ Start</button>
+  </main>
+
+  <div class="modal" id="modal">
+    <div class="panel">
+      <h2 id="mTitle"></h2>
+      <p id="mText"></p>
+      <button class="btn primary" id="mBtn"></button>
+    </div>
+  </div>
+
+  <p class="credit">Game Zone by Shubham Goyal</p>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const ROUND_MS = 30000;
+      const $ = (id) => document.getElementById(id);
+      const field = $("field");
+      const holes = [];
+
+      for (let i = 0; i < 9; i++) {
+        const h = document.createElement("div");
+        h.className = "hole";
+        h.innerHTML = `<div class="mole"></div>`;
+        h.addEventListener("pointerdown", (e) => { e.preventDefault(); whack(i); });
+        field.appendChild(h);
+        holes.push({ el: h, mole: h.firstChild, kind: null, timer: null });
+      }
+
+      let mode = store.get("whack_mode", "1p");
+      let best = store.get("whack_best", 0);
+      let running = false, score = 0, player = 1, results = {}, endAt = 0, spawnTimer, tick;
+
+      function render() {
+        const panel = $("scorePanel");
+        if (mode === "1p") {
+          panel.innerHTML = `
+            <div><div class="label">Score</div><div class="value">${score}</div></div>
+            <div><div class="label">Best</div><div class="value">${best}</div></div>`;
+        } else {
+          const s1 = player === 1 ? score : results[1] ?? "–";
+          const s2 = player === 2 ? score : results[2] ?? "–";
+          panel.innerHTML = `
+            <div class="p1"><div class="label">Player 1${player === 1 && running ? " ▶" : ""}</div><div class="value">${s1}</div></div>
+            <div class="p2"><div class="label">Player 2${player === 2 && running ? " ▶" : ""}</div><div class="value">${s2}</div></div>`;
+        }
+      }
+
+      function popText(h, txt, color) {
+        const p = document.createElement("div");
+        p.className = "pop";
+        p.textContent = txt;
+        p.style.color = color;
+        h.el.appendChild(p);
+        setTimeout(() => p.remove(), 600);
+      }
+
+      function hide(h) {
+        clearTimeout(h.timer);
+        h.el.classList.remove("up", "gold", "hit");
+        h.kind = null;
+      }
+
+      function spawn() {
+        if (!running) return;
+        const left = Math.max(0, endAt - Date.now());
+        const progress = 1 - left / ROUND_MS; // 0 → 1, jaise time beetega game tez hoga
+        const free = holes.filter((h) => !h.kind);
+        if (free.length) {
+          const h = free[Math.floor(Math.random() * free.length)];
+          const r = Math.random();
+          h.kind = r < 0.1 ? "gold" : r < 0.25 ? "bomb" : "mole";
+          h.mole.textContent = h.kind === "bomb" ? "💣" : "🐹";
+          h.el.classList.add("up");
+          if (h.kind === "gold") h.el.classList.add("gold");
+          const stay = (h.kind === "gold" ? 650 : 1100) - progress * 450;
+          h.timer = setTimeout(() => hide(h), stay);
+        }
+        spawnTimer = setTimeout(spawn, 750 - progress * 400 + Math.random() * 200);
+      }
+
+      function whack(i) {
+        const h = holes[i];
+        if (!running || !h.kind || h.el.classList.contains("hit")) return;
+        const pts = h.kind === "gold" ? 3 : h.kind === "bomb" ? -3 : 1;
+        score = Math.max(0, score + pts);
+        popText(h, pts > 0 ? `+${pts}` : `${pts}`, pts > 0 ? "#ffcc33" : "#ff6b6b");
+        if (h.kind === "bomb" && navigator.vibrate) navigator.vibrate(100);
+        h.el.classList.add("hit");
+        clearTimeout(h.timer);
+        h.timer = setTimeout(() => hide(h), 180);
+        render();
+      }
+
+      function startRound() {
+        $("modal").classList.remove("show");
+        $("startBtn").disabled = true;
+        score = 0;
+        running = true;
+        endAt = Date.now() + ROUND_MS;
+        holes.forEach(hide);
+        render();
+        spawn();
+        tick = setInterval(() => {
+          const left = Math.max(0, endAt - Date.now());
+          $("timebar").style.width = (left / ROUND_MS) * 100 + "%";
+          if (left === 0) endRound();
+        }, 100);
+      }
+
+      function endRound() {
+        running = false;
+        clearInterval(tick);
+        clearTimeout(spawnTimer);
+        holes.forEach(hide);
+        $("startBtn").disabled = false;
+
+        if (mode === "1p") {
+          const isBest = score > best;
+          if (isBest) { best = score; store.set("whack_best", best); }
+          showModal(isBest ? "🏆 Naya Record!" : "⏰ Time khatam!", `Aapka score: ${score}`, "Dobara khelo", startRound);
+        } else if (player === 1) {
+          results[1] = score;
+          player = 2;
+          render();
+          showModal("Player 1: " + score, "Ab phone/laptop Player 2 ko do", "▶ Player 2 Start", startRound);
+        } else {
+          results[2] = score;
+          const [a, b] = [results[1], results[2]];
+          const title = a === b ? "🤝 Barabar!" : `🎉 Player ${a > b ? 1 : 2} jeet gaya!`;
+          showModal(title, `Player 1: ${a} · Player 2: ${b}`, "Naya match", newMatch);
+        }
+        render();
+      }
+
+      function showModal(title, text, btn, action) {
+        $("mTitle").textContent = title;
+        $("mText").textContent = text;
+        $("mBtn").textContent = btn;
+        $("mBtn").onclick = action;
+        $("modal").classList.add("show");
+      }
+
+      function newMatch() {
+        player = 1;
+        results = {};
+        score = 0;
+        render();
+        startRound();
+      }
+
+      function setMode(m) {
+        mode = m;
+        store.set("whack_mode", m);
+        document.querySelectorAll("#modeRow .btn").forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
+        if (running) { running = false; clearInterval(tick); clearTimeout(spawnTimer); holes.forEach(hide); }
+        $("startBtn").disabled = false;
+        $("timebar").style.width = "100%";
+        player = 1;
+        results = {};
+        score = 0;
+        render();
+      }
+
+      document.querySelectorAll("#modeRow .btn").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+      $("startBtn").addEventListener("click", () => (mode === "2p" && player === 2 ? startRound() : newMatch()));
+
+      // Laptop par number keys 1–9 se bhi maar sakte ho (numpad jaisa layout)
+      const KEYMAP = { 7: 0, 8: 1, 9: 2, 4: 3, 5: 4, 6: 5, 1: 6, 2: 7, 3: 8 };
+      window.addEventListener("keydown", (e) => {
+        const k = e.key;
+        if (KEYMAP[k] !== undefined) whack(KEYMAP[k]);
+      });
+
+      setMode(mode);
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Pong – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+  <style>
+    html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+    body { user-select: none; -webkit-user-select: none; height: 100vh; height: 100dvh; }
+    main.stage { min-height: 0; padding-bottom: 10px; gap: 10px; }
+    #wrap { flex: 1; width: 100%; min-height: 0; display: grid; place-items: center; }
+    canvas {
+      display: block;
+      border-radius: 12px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+      touch-action: none;
+    }
+    .hint { color: var(--muted); font-size: 0.8rem; text-align: center; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🏓 Pong</h1>
+    <span class="spacer"></span>
+  </header>
+
+  <main class="stage">
+    <div class="row" id="modeRow">
+      <button class="btn small" data-mode="cpu">🤖 vs Computer</button>
+      <button class="btn small" data-mode="2p">👥 2 Players</button>
+    </div>
+    <div id="wrap"><canvas id="game"></canvas></div>
+    <div class="hint" id="hint"></div>
+  </main>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      // Field khada (portrait) hai: Player 1 neeche, Player 2 / Computer upar.
+      // Phone ko table par rakh ke dono taraf se khel sakte hain.
+      const W = 400, H = 680;
+      const PW = 90, PH = 14, BALL_R = 9;
+      const WIN_SCORE = 7;
+      const KEY_SPEED = 560;
+
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const wrap = document.getElementById("wrap");
+      const isTouch = !window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+
+      let mode = store.get("pong_mode", "cpu");
+      let p1, p2, ball, state, serveTo, scores, flash, lastHitBy;
+
+      function resize() {
+        const dpr = Math.min(window.devicePixelRatio || 1, 3);
+        const scale = Math.min(wrap.clientWidth / W, wrap.clientHeight / H);
+        const cw = Math.floor(W * scale), ch = Math.floor(H * scale);
+        canvas.style.width = cw + "px";
+        canvas.style.height = ch + "px";
+        canvas.width = Math.floor(cw * dpr);
+        canvas.height = Math.floor(ch * dpr);
+        ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0);
+      }
+
+      function resetMatch() {
+        p1 = { x: W / 2, y: H - 40, target: null };
+        p2 = { x: W / 2, y: 40, target: null };
+        scores = { 1: 0, 2: 0 };
+        serveTo = Math.random() < 0.5 ? 1 : 2;
+        flash = 0;
+        placeBall();
+        state = "ready";
+      }
+
+      function placeBall() {
+        ball = { x: W / 2, y: H / 2, vx: 0, vy: 0, speed: 380 };
+      }
+
+      function serve() {
+        const angle = (Math.random() * 0.8 - 0.4);
+        const dir = serveTo === 1 ? 1 : -1; // jisne point haara, ball uski taraf jaayegi
+        ball.vx = Math.sin(angle) * ball.speed;
+        ball.vy = Math.cos(angle) * ball.speed * dir;
+        state = "play";
+      }
+
+      function action() {
+        if (state === "ready") serve();
+        else if (state === "over") { resetMatch(); }
+      }
+
+      // ---------- Input ----------
+      const keys = {};
+      window.addEventListener("keydown", (e) => {
+        keys[e.code] = true;
+        if (["ArrowLeft", "ArrowRight", "Space"].includes(e.code)) e.preventDefault();
+        if ((e.code === "Space" || e.code === "Enter") && !e.repeat) action();
+      });
+      window.addEventListener("keyup", (e) => (keys[e.code] = false));
+
+      const pointers = new Map(); // pointerId -> kaunsa paddle
+      function toField(e) {
+        const r = canvas.getBoundingClientRect();
+        return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
+      }
+      function steer(e) {
+        const pt = toField(e);
+        let who = pointers.get(e.pointerId);
+        if (!who) {
+          who = mode === "2p" && pt.y < H / 2 ? 2 : 1;
+          if (e.type === "pointerdown") pointers.set(e.pointerId, who);
+        }
+        (who === 1 ? p1 : p2).target = pt.x;
+      }
+      canvas.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        steer(e);
+        action();
+      });
+      canvas.addEventListener("pointermove", (e) => {
+        // Mouse: bina click kiye neeche wala paddle chalta hai
+        if (e.pointerType === "mouse" || pointers.has(e.pointerId)) steer(e);
+      });
+      const release = (e) => {
+        const who = pointers.get(e.pointerId);
+        pointers.delete(e.pointerId);
+        if (who && e.pointerType !== "mouse") (who === 1 ? p1 : p2).target = null;
+      };
+      canvas.addEventListener("pointerup", release);
+      canvas.addEventListener("pointercancel", release);
+
+      // ---------- Update ----------
+      const clampX = (x) => Math.max(PW / 2, Math.min(W - PW / 2, x));
+
+      function movePaddle(p, left, right, dt) {
+        if (keys[left]) { p.x -= KEY_SPEED * dt; p.target = null; }
+        if (keys[right]) { p.x += KEY_SPEED * dt; p.target = null; }
+        if (p.target !== null) p.x += (p.target - p.x) * Math.min(1, dt * 25);
+        p.x = clampX(p.x);
+      }
+
+      function cpu(dt) {
+        const maxSpeed = 300 + Math.min(scores[1], 6) * 25; // aap jeetoge toh computer tez hoga
+        let goal = W / 2;
+        if (ball.vy < 0) {
+          // Ball aa rahi hai: andaaza lagao kahan aayegi (deewar se bounce samet)
+          const t = (ball.y - p2.y) / -ball.vy;
+          let x = ball.x + ball.vx * t;
+          const span = W - 2 * BALL_R;
+          x = ((x - BALL_R) % (2 * span) + 2 * span) % (2 * span);
+          goal = (x > span ? 2 * span - x : x) + BALL_R;
+          goal += Math.sin(performance.now() / 300) * 18; // thodi insaani galti
+        }
+        const d = goal - p2.x;
+        p2.x = clampX(p2.x + Math.sign(d) * Math.min(Math.abs(d), maxSpeed * dt));
+      }
+
+      function hitPaddle(p, dirAfter) {
+        const top = p.y - PH / 2 - BALL_R, bottom = p.y + PH / 2 + BALL_R;
+        if (ball.y < top || ball.y > bottom) return false;
+        if (Math.abs(ball.x - p.x) > PW / 2 + BALL_R) return false;
+        if (Math.sign(ball.vy) === dirAfter) return false;
+        const offset = (ball.x - p.x) / (PW / 2 + BALL_R); // -1 .. 1
+        const angle = offset * 1.05; // kinare par lage toh tircha jaayega
+        ball.speed = Math.min(900, ball.speed * 1.06);
+        ball.vx = Math.sin(angle) * ball.speed;
+        ball.vy = Math.cos(angle) * ball.speed * dirAfter;
+        ball.y = dirAfter < 0 ? top : bottom;
+        beep(dirAfter < 0 ? 520 : 620);
+        return true;
+      }
+
+      function point(winner) {
+        scores[winner]++;
+        flash = 1;
+        beep(200, 0.25);
+        if (navigator.vibrate) navigator.vibrate(80);
+        serveTo = winner === 1 ? 2 : 1;
+        placeBall();
+        state = scores[winner] >= WIN_SCORE ? "over" : "ready";
+      }
+
+      function update(dt) {
+        flash = Math.max(0, flash - dt * 2);
+        movePaddle(p1, "ArrowLeft", "ArrowRight", dt);
+        if (mode === "2p") movePaddle(p2, "KeyA", "KeyD", dt);
+        else if (state === "play") cpu(dt);
+
+        if (state !== "play") return;
+
+        // Chhote steps mein chalao taaki tez ball paddle ke aar-paar na nikle
+        const steps = Math.ceil((ball.speed * dt) / 8);
+        for (let i = 0; i < steps; i++) {
+          const sdt = dt / steps;
+          ball.x += ball.vx * sdt;
+          ball.y += ball.vy * sdt;
+          if (ball.x < BALL_R) { ball.x = BALL_R; ball.vx = Math.abs(ball.vx); beep(380, 0.05); }
+          if (ball.x > W - BALL_R) { ball.x = W - BALL_R; ball.vx = -Math.abs(ball.vx); beep(380, 0.05); }
+          hitPaddle(p1, -1);
+          hitPaddle(p2, 1);
+          if (ball.y > H + BALL_R) return point(2);
+          if (ball.y < -BALL_R) return point(1);
+        }
+      }
+
+      // ---------- Sound ----------
+      let ac = null;
+      function beep(freq, dur = 0.06) {
+        try {
+          if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+          if (ac.state === "suspended") ac.resume();
+          const t = ac.currentTime, o = ac.createOscillator(), g = ac.createGain();
+          o.type = "square";
+          o.frequency.value = freq;
+          g.gain.setValueAtTime(0.05, t);
+          g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+          o.connect(g).connect(ac.destination);
+          o.start(t);
+          o.stop(t + dur);
+        } catch { /* no audio */ }
+      }
+
+      // ---------- Draw ----------
+      function rr(x, y, w, h, r) {
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r);
+        ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r);
+        ctx.arcTo(x, y, x + w, y, r);
+        ctx.closePath();
+      }
+
+      function label(txt, x, y, size, color, flip) {
+        ctx.save();
+        ctx.translate(x, y);
+        if (flip) ctx.rotate(Math.PI);
+        ctx.font = `800 ${size}px "Segoe UI", system-ui, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = color;
+        ctx.fillText(txt, 0, 0);
+        ctx.restore();
+      }
+
+      function draw() {
+        ctx.fillStyle = "#14163a";
+        ctx.fillRect(0, 0, W, H);
+        if (flash > 0) {
+          ctx.fillStyle = `rgba(255,255,255,${flash * 0.15})`;
+          ctx.fillRect(0, 0, W, H);
+        }
+
+        // Beech ki line
+        ctx.strokeStyle = "rgba(255,255,255,0.18)";
+        ctx.lineWidth = 3;
+        ctx.setLineDash([14, 12]);
+        ctx.beginPath();
+        ctx.moveTo(0, H / 2);
+        ctx.lineTo(W, H / 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Score (upar wale player ke liye ulta, taaki saamne se padh sake)
+        const flipTop = mode === "2p" && isTouch;
+        label(scores[2], W - 40, H / 2 - 40, 44, "rgba(255,204,51,0.6)", flipTop);
+        label(scores[1], W - 40, H / 2 + 40, 44, "rgba(94,231,255,0.6)", false);
+
+        // Paddles
+        ctx.fillStyle = "#ffcc33";
+        rr(p2.x - PW / 2, p2.y - PH / 2, PW, PH, 7);
+        ctx.fill();
+        ctx.fillStyle = "#5ee7ff";
+        rr(p1.x - PW / 2, p1.y - PH / 2, PW, PH, 7);
+        ctx.fill();
+
+        // Ball
+        ctx.fillStyle = "#fff";
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y, BALL_R, 0, Math.PI * 2);
+        ctx.fill();
+
+        const topName = mode === "2p" ? "Player 2" : "Computer";
+        if (state === "ready") {
+          const tap = isTouch ? "Tap karke serve karo" : "Space dabake serve karo";
+          if (scores[1] + scores[2] === 0) {
+            label(`Pehle ${WIN_SCORE} point jeeto`, W / 2, H / 2 - 110, 22, "#fff", flipTop);
+          }
+          label(tap, W / 2, H / 2 + 110, 20, "#ffcc33", false);
+          if (flipTop) label(tap, W / 2, H / 2 - 150, 20, "#ffcc33", true);
+        } else if (state === "over") {
+          ctx.fillStyle = "rgba(15,16,32,0.6)";
+          ctx.fillRect(0, 0, W, H);
+          const w = scores[1] > scores[2] ? 1 : 2;
+          const msg1 = mode === "cpu" ? (w === 1 ? "🎉 Aap jeet gaye!" : "😢 Computer jeeta") : `🎉 Player ${w} jeeta!`;
+          label(msg1, W / 2, H / 2 + 80, 30, "#fff", false);
+          label(`${scores[1]} – ${scores[2]}`, W / 2, H / 2 + 125, 26, "#ffcc33", false);
+          if (flipTop) label(`🎉 Player ${w} jeeta!`, W / 2, H / 2 - 80, 30, "#fff", true);
+          label(isTouch ? "Tap = naya match" : "Space = naya match", W / 2, H / 2 + 170, 18, "#a3a6d1", false);
+        }
+        if (state !== "over") {
+          label(topName, 60, 16, 13, "rgba(255,204,51,0.7)", false);
+          label(mode === "2p" ? "Player 1" : "Aap", 60, H - 14, 13, "rgba(94,231,255,0.7)", false);
+        }
+      }
+
+      // ---------- Loop ----------
+      let last = performance.now();
+      function loop(now) {
+        const dt = Math.min((now - last) / 1000, 1 / 30);
+        last = now;
+        update(dt);
+        draw();
+        requestAnimationFrame(loop);
+      }
+      document.addEventListener("visibilitychange", () => {
+        last = performance.now();
+        if (document.hidden && state === "play") { placeBall(); state = "ready"; }
+      });
+
+      function setMode(m) {
+        mode = m;
+        store.set("pong_mode", m);
+        document.querySelectorAll("#modeRow .btn").forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
+        document.getElementById("hint").textContent = isTouch
+          ? (m === "2p" ? "Apne aadhe hisse mein ungli chalao (dono saath khel sakte ho)" : "Ungli chalake paddle hilao")
+          : (m === "2p" ? "Player 1 (neeche): ← →  ·  Player 2 (upar): A D  ·  Space = serve" : "Mouse ya ← → se paddle chalao · Space = serve");
+        resetMatch();
+        document.activeElement && document.activeElement.blur();
+      }
+      document.querySelectorAll("#modeRow .btn").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+
+      window.addEventListener("resize", resize);
+      setMode(mode);
+      resize();
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>

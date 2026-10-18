@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Connect Four – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+  <style>
+    .board {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: clamp(4px, 1.5vw, 8px);
+      width: min(94vw, 480px);
+      padding: clamp(6px, 2vw, 12px);
+      background: #2b4fd8;
+      border-radius: 16px;
+      box-shadow: inset 0 -6px 0 rgba(0, 0, 0, 0.2), 0 10px 30px rgba(0, 0, 0, 0.4);
+    }
+    .col {
+      display: grid;
+      grid-template-rows: repeat(6, 1fr);
+      gap: clamp(4px, 1.5vw, 8px);
+      background: none;
+      border: none;
+      padding: 0;
+      border-radius: 10px;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    @media (hover: hover) { .col:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); } }
+    .col:disabled { cursor: default; }
+    .slot {
+      aspect-ratio: 1;
+      border-radius: 50%;
+      background: #0f1020;
+      box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.6);
+      position: relative;
+    }
+    .disc {
+      position: absolute;
+      inset: 6%;
+      border-radius: 50%;
+      animation: drop 0.35s cubic-bezier(.4, 0, 1, 1);
+      box-shadow: inset 0 -4px 0 rgba(0, 0, 0, 0.25);
+    }
+    .disc.r { background: #ef4444; }
+    .disc.y { background: #facc15; }
+    .disc.win { animation: glow 0.8s ease-in-out infinite alternate; }
+    @keyframes drop { from { transform: translateY(calc(var(--d) * -118%)); } }
+    @keyframes glow { to { box-shadow: 0 0 0 4px #fff, 0 0 18px #fff; } }
+    .red { color: #ef4444; }
+    .yellow { color: #facc15; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🔴 Connect Four 🟡</h1>
+    <span class="spacer"></span>
+  </header>
+
+  <main class="stage">
+    <div class="row" id="modeRow">
+      <button class="btn small" data-mode="easy">🤖 Easy</button>
+      <button class="btn small" data-mode="hard">🤖 Hard</button>
+      <button class="btn small" data-mode="2p">👥 2 Players</button>
+    </div>
+
+    <div class="panel scores">
+      <div class="red"><div class="label" id="rLabel">Aap 🔴</div><div class="value" id="rScore">0</div></div>
+      <div><div class="label">Draw</div><div class="value" id="dScore">0</div></div>
+      <div class="yellow"><div class="label" id="yLabel">CPU 🟡</div><div class="value" id="yScore">0</div></div>
+    </div>
+
+    <div class="status" id="status"></div>
+    <div class="board" id="board"></div>
+
+    <div class="row">
+      <button class="btn primary" id="newBtn">🔄 New Round</button>
+      <button class="btn" id="resetBtn">Reset Score</button>
+    </div>
+    <div class="muted" style="font-size:.85rem;text-align:center">Line mein 4 discs lagao: seedha, khada ya tircha</div>
+  </main>
+
+  <p class="credit">Game Zone by Shubham Goyal</p>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const ROWS = 6, COLS = 7;
+      const R = 1, Y = 2; // R = Player 1 / Aap, Y = Player 2 / Computer
+      const $ = (id) => document.getElementById(id);
+      const boardEl = $("board");
+
+      let mode = store.get("c4_mode", "hard");
+      let b, turn, over, starter = R, round = 0;
+      let scores = { [R]: 0, [Y]: 0, D: 0 };
+      const cols = [], slots = [];
+
+      for (let c = 0; c < COLS; c++) {
+        const col = document.createElement("button");
+        col.className = "col";
+        col.setAttribute("aria-label", `Column ${c + 1}`);
+        slots[c] = [];
+        for (let r = 0; r < ROWS; r++) {
+          const s = document.createElement("div");
+          s.className = "slot";
+          col.appendChild(s);
+          slots[c][r] = s;
+        }
+        col.addEventListener("click", () => humanMove(c));
+        boardEl.appendChild(col);
+        cols.push(col);
+      }
+
+      const vsCpu = () => mode !== "2p";
+      const names = () => (vsCpu() ? { [R]: "Aap", [Y]: "Computer" } : { [R]: "Player 1", [Y]: "Player 2" });
+
+      function lowestRow(board, c) {
+        for (let r = ROWS - 1; r >= 0; r--) if (!board[r][c]) return r;
+        return -1;
+      }
+
+      function winLine(board, r, c) {
+        const p = board[r][c];
+        for (const [dr, dc] of [[0, 1], [1, 0], [1, 1], [1, -1]]) {
+          const line = [[r, c]];
+          for (const s of [1, -1]) {
+            let rr = r + dr * s, cc = c + dc * s;
+            while (rr >= 0 && rr < ROWS && cc >= 0 && cc < COLS && board[rr][cc] === p) {
+              line.push([rr, cc]);
+              rr += dr * s; cc += dc * s;
+            }
+          }
+          if (line.length >= 4) return line;
+        }
+        return null;
+      }
+
+      // ---------- Computer (minimax + alpha-beta) ----------
+      function scoreWindow(w, p) {
+        const o = p === R ? Y : R;
+        const mine = w.filter((x) => x === p).length;
+        const theirs = w.filter((x) => x === o).length;
+        const empty = 4 - mine - theirs;
+        if (mine === 4) return 1000;
+        if (mine === 3 && empty === 1) return 6;
+        if (mine === 2 && empty === 2) return 2;
+        if (theirs === 3 && empty === 1) return -5;
+        return 0;
+      }
+
+      function evaluate(board, p) {
+        let s = 0;
+        for (let r = 0; r < ROWS; r++) if (board[r][3] === p) s += 3;
+        for (let r = 0; r < ROWS; r++)
+          for (let c = 0; c < COLS; c++)
+            for (const [dr, dc] of [[0, 1], [1, 0], [1, 1], [1, -1]]) {
+              const er = r + dr * 3, ec = c + dc * 3;
+              if (er < 0 || er >= ROWS || ec < 0 || ec >= COLS) continue;
+              const w = [0, 1, 2, 3].map((k) => board[r + dr * k][c + dc * k]);
+              s += scoreWindow(w, p);
+            }
+        return s;
+      }
+
+      const ORDER = [3, 2, 4, 1, 5, 0, 6];
+
+      function minimax(board, depth, alpha, beta, maximizing) {
+        const valid = ORDER.filter((c) => !board[0][c]);
+        if (depth === 0 || !valid.length) return { score: evaluate(board, Y) };
+        let bestCol = valid[0];
+        if (maximizing) {
+          let value = -Infinity;
+          for (const c of valid) {
+            const r = lowestRow(board, c);
+            board[r][c] = Y;
+            const sc = winLine(board, r, c) ? 100000 + depth : minimax(board, depth - 1, alpha, beta, false).score;
+            board[r][c] = 0;
+            if (sc > value) { value = sc; bestCol = c; }
+            alpha = Math.max(alpha, value);
+            if (alpha >= beta) break;
+          }
+          return { score: value, col: bestCol };
+        } else {
+          let value = Infinity;
+          for (const c of valid) {
+            const r = lowestRow(board, c);
+            board[r][c] = R;
+            const sc = winLine(board, r, c) ? -100000 - depth : minimax(board, depth - 1, alpha, beta, true).score;
+            board[r][c] = 0;
+            if (sc < value) { value = sc; bestCol = c; }
+            beta = Math.min(beta, value);
+            if (alpha >= beta) break;
+          }
+          return { score: value, col: bestCol };
+        }
+      }
+
+      function cpuPick() {
+        const valid = ORDER.filter((c) => !b[0][c]);
+        if (mode === "easy") {
+          // Easy: jeet sakta hai toh jeetega, warna aksar random
+          for (const c of valid) {
+            const r = lowestRow(b, c);
+            b[r][c] = Y;
+            const w = winLine(b, r, c);
+            b[r][c] = 0;
+            if (w) return c;
+          }
+          if (Math.random() < 0.6) return valid[Math.floor(Math.random() * valid.length)];
+          return minimax(b, 2, -Infinity, Infinity, true).col;
+        }
+        return minimax(b, 6, -Infinity, Infinity, true).col;
+      }
+
+      // ---------- Game flow ----------
+      function drop(c) {
+        const r = lowestRow(b, c);
+        if (r < 0) return false;
+        b[r][c] = turn;
+        const d = document.createElement("div");
+        d.className = "disc " + (turn === R ? "r" : "y");
+        d.style.setProperty("--d", r + 1);
+        slots[c][r].appendChild(d);
+        if (b[0][c]) cols[c].disabled = true;
+
+        const line = winLine(b, r, c);
+        if (line) {
+          over = true;
+          line.forEach(([rr, cc]) => slots[cc][rr].firstChild.classList.add("win"));
+          scores[turn]++;
+          const cls = turn === R ? "red" : "yellow";
+          $("status").innerHTML = `<span class="${cls}">🎉 ${names()[turn]} jeet gaya!</span>`;
+        } else if (b[0].every(Boolean)) {
+          over = true;
+          scores.D++;
+          $("status").innerHTML = `<span class="muted">🤝 Draw ho gaya!</span>`;
+        } else {
+          turn = turn === R ? Y : R;
+          updateStatus();
+        }
+        if (over) cols.forEach((col) => (col.disabled = true));
+        renderScores();
+        return true;
+      }
+
+      function humanMove(c) {
+        if (over) return;
+        if (vsCpu() && turn === Y) return;
+        if (!drop(c)) return;
+        if (!over && vsCpu()) cpuTurn();
+      }
+
+      function cpuTurn() {
+        const my = round;
+        cols.forEach((col) => (col.disabled = true));
+        setTimeout(() => {
+          if (my !== round || over) return;
+          drop(cpuPick());
+          if (!over) cols.forEach((col, c) => (col.disabled = !!b[0][c]));
+        }, 450);
+      }
+
+      function updateStatus() {
+        const n = names()[turn];
+        const cls = turn === R ? "red" : "yellow";
+        $("status").innerHTML = vsCpu() && turn === Y
+          ? `<span class="yellow">Computer soch raha hai...</span>`
+          : `<span class="${cls}">${n} ki baari ${turn === R ? "🔴" : "🟡"}</span>`;
+      }
+
+      function renderScores() {
+        $("rScore").textContent = scores[R];
+        $("yScore").textContent = scores[Y];
+        $("dScore").textContent = scores.D;
+        $("rLabel").textContent = vsCpu() ? "Aap 🔴" : "Player 1 🔴";
+        $("yLabel").textContent = vsCpu() ? "CPU 🟡" : "Player 2 🟡";
+      }
+
+      function newRound() {
+        round++;
+        b = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+        over = false;
+        turn = starter;
+        starter = starter === R ? Y : R; // har round mein pehli baari badalti hai
+        slots.flat().forEach((s) => (s.innerHTML = ""));
+        cols.forEach((col) => (col.disabled = false));
+        updateStatus();
+        if (vsCpu() && turn === Y) cpuTurn();
+      }
+
+      function setMode(m) {
+        mode = m;
+        store.set("c4_mode", m);
+        document.querySelectorAll("#modeRow .btn").forEach((x) => x.classList.toggle("active", x.dataset.mode === m));
+        scores = { [R]: 0, [Y]: 0, D: 0 };
+        starter = R;
+        renderScores();
+        newRound();
+      }
+
+      document.querySelectorAll("#modeRow .btn").forEach((x) => x.addEventListener("click", () => setMode(x.dataset.mode)));
+      $("newBtn").addEventListener("click", newRound);
+      $("resetBtn").addEventListener("click", () => {
+        scores = { [R]: 0, [Y]: 0, D: 0 };
+        renderScores();
+      });
+
+      // Laptop: number keys 1–7 se disc daalo
+      window.addEventListener("keydown", (e) => {
+        const n = parseInt(e.key, 10);
+        if (n >= 1 && n <= 7) humanMove(n - 1);
+      });
+
+      setMode(mode);
+    })();
+  </script>
+</body>
+</html>

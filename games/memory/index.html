@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Memory Cards – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+  <style>
+    .board {
+      display: grid;
+      gap: 8px;
+      width: min(92vw, 480px);
+    }
+    .card {
+      aspect-ratio: 3 / 4;
+      perspective: 600px;
+      cursor: pointer;
+      border: none;
+      background: none;
+      padding: 0;
+      touch-action: manipulation;
+    }
+    .card .inner {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      transition: transform 0.35s ease;
+      transform-style: preserve-3d;
+    }
+    .card.open .inner, .card.done .inner { transform: rotateY(180deg); }
+    .card .face {
+      position: absolute;
+      inset: 0;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+    }
+    .card .back {
+      background: linear-gradient(135deg, #7b5cff, #4a2fbf);
+      border: 2px solid rgba(255, 255, 255, 0.15);
+      font-size: 1.4rem;
+      color: rgba(255, 255, 255, 0.5);
+    }
+    .card .front {
+      background: #f4f4ff;
+      transform: rotateY(180deg);
+      font-size: clamp(1.6rem, 8vw, 2.6rem);
+    }
+    .card.done .front { background: #c8f7d4; }
+    .card.done { cursor: default; }
+    .card.done.p1 .front { box-shadow: inset 0 0 0 3px var(--accent-2); }
+    .card.done.p2 .front { box-shadow: inset 0 0 0 3px var(--accent); }
+    .card.wrong .inner { animation: wiggle 0.4s; }
+    @keyframes wiggle {
+      25% { transform: rotateY(180deg) rotate(-5deg); }
+      75% { transform: rotateY(180deg) rotate(5deg); }
+    }
+    .turn-p1 #p1Box, .turn-p2 #p2Box { outline: 2px solid currentColor; border-radius: 12px; }
+    .scores > div { padding: 4px 10px; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🃏 Memory Cards</h1>
+    <span class="spacer"></span>
+  </header>
+
+  <main class="stage">
+    <div class="row" id="modeRow">
+      <button class="btn small" data-mode="1p">👤 Solo</button>
+      <button class="btn small" data-mode="2p">👥 2 Players</button>
+    </div>
+    <div class="row" id="levelRow">
+      <button class="btn small" data-level="easy">Easy (12)</button>
+      <button class="btn small" data-level="medium">Medium (16)</button>
+      <button class="btn small" data-level="hard">Hard (24)</button>
+    </div>
+
+    <div class="panel scores" id="scorePanel"></div>
+    <div class="status" id="status"></div>
+    <div class="board" id="board"></div>
+    <button class="btn primary" id="newBtn">🔄 New Game</button>
+  </main>
+
+  <div class="modal" id="modal">
+    <div class="panel">
+      <h2 id="mTitle"></h2>
+      <p id="mText"></p>
+      <button class="btn primary" id="mBtn">Dobara khelo</button>
+    </div>
+  </div>
+
+  <p class="credit">Game Zone by Shubham Goyal</p>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const EMOJIS = ["🍎", "🍌", "🍇", "🍓", "🍒", "🥝", "🍍", "🥥", "🍉", "🍑", "🥕", "🌽", "🍩", "🍪", "🍕", "🍔"];
+      const LEVELS = {
+        easy: { pairs: 6, cols: 4 },
+        medium: { pairs: 8, cols: 4 },
+        hard: { pairs: 12, cols: 6 },
+      };
+      const $ = (id) => document.getElementById(id);
+      const boardEl = $("board");
+
+      let mode = store.get("mem_mode", "1p");
+      let level = store.get("mem_level", "medium");
+      let cards, open, lock, matched, moves, startTime, timer, turn, pts;
+
+      function shuffle(a) {
+        for (let i = a.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [a[i], a[j]] = [a[j], a[i]];
+        }
+        return a;
+      }
+
+      function newGame() {
+        const L = LEVELS[level];
+        const picks = shuffle([...EMOJIS]).slice(0, L.pairs);
+        cards = shuffle([...picks, ...picks]);
+        open = [];
+        lock = false;
+        matched = 0;
+        moves = 0;
+        turn = 1;
+        pts = { 1: 0, 2: 0 };
+        startTime = null;
+        clearInterval(timer);
+        $("modal").classList.remove("show");
+
+        boardEl.style.gridTemplateColumns = `repeat(${L.cols}, 1fr)`;
+        boardEl.innerHTML = "";
+        cards.forEach((e, i) => {
+          const b = document.createElement("button");
+          b.className = "card";
+          b.setAttribute("aria-label", "Card");
+          b.innerHTML = `<div class="inner"><div class="face back">?</div><div class="face front">${e}</div></div>`;
+          b.addEventListener("click", () => flip(i, b));
+          boardEl.appendChild(b);
+        });
+        render();
+      }
+
+      function elapsed() {
+        return startTime ? Math.floor((Date.now() - startTime) / 1000) : 0;
+      }
+      function fmt(s) {
+        return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+      }
+
+      function render() {
+        const panel = $("scorePanel");
+        if (mode === "1p") {
+          const best = store.get(`mem_best_${level}`, null);
+          panel.innerHTML = `
+            <div><div class="label">Moves</div><div class="value">${moves}</div></div>
+            <div><div class="label">Time</div><div class="value">${fmt(elapsed())}</div></div>
+            <div><div class="label">Best</div><div class="value">${best ? best + "" : "–"}</div></div>`;
+          $("status").innerHTML = `<span class="muted">Do-do same cards dhoondho</span>`;
+          document.body.classList.remove("turn-p1", "turn-p2");
+        } else {
+          panel.innerHTML = `
+            <div id="p1Box" class="p1"><div class="label">Player 1</div><div class="value">${pts[1]}</div></div>
+            <div id="p2Box" class="p2"><div class="label">Player 2</div><div class="value">${pts[2]}</div></div>`;
+          $("status").innerHTML = `<span class="p${turn}">Player ${turn} ki baari</span>`;
+          document.body.classList.toggle("turn-p1", turn === 1);
+          document.body.classList.toggle("turn-p2", turn === 2);
+        }
+      }
+
+      function flip(i, el) {
+        if (lock || el.classList.contains("open") || el.classList.contains("done")) return;
+        if (!startTime) {
+          startTime = Date.now();
+          if (mode === "1p") timer = setInterval(render, 1000);
+        }
+        el.classList.add("open");
+        open.push({ i, el });
+        if (open.length < 2) return;
+
+        moves++;
+        const [a, b] = open;
+        if (cards[a.i] === cards[b.i]) {
+          open = [];
+          setTimeout(() => {
+            [a, b].forEach((c) => {
+              c.el.classList.remove("open");
+              c.el.classList.add("done");
+              if (mode === "2p") c.el.classList.add("p" + turn);
+            });
+          }, 300);
+          matched++;
+          pts[turn]++; // sahi jodi = wahi player dobara khelega
+          render();
+          if (matched === cards.length / 2) setTimeout(finish, 700);
+        } else {
+          lock = true;
+          setTimeout(() => {
+            a.el.classList.add("wrong");
+            b.el.classList.add("wrong");
+          }, 350);
+          setTimeout(() => {
+            [a, b].forEach((c) => c.el.classList.remove("open", "wrong"));
+            open = [];
+            lock = false;
+            if (mode === "2p") turn = turn === 1 ? 2 : 1;
+            render();
+          }, 1000);
+          render();
+        }
+      }
+
+      function finish() {
+        clearInterval(timer);
+        let title, text;
+        if (mode === "1p") {
+          const best = store.get(`mem_best_${level}`, null);
+          const isBest = !best || moves < best;
+          if (isBest) store.set(`mem_best_${level}`, moves);
+          title = isBest ? "🏆 Naya Record!" : "🎉 Shabaash!";
+          text = `${moves} moves · ${fmt(elapsed())} time`;
+        } else {
+          if (pts[1] === pts[2]) title = "🤝 Barabar!";
+          else title = `🎉 Player ${pts[1] > pts[2] ? 1 : 2} jeet gaya!`;
+          text = `Player 1: ${pts[1]} · Player 2: ${pts[2]}`;
+        }
+        $("mTitle").textContent = title;
+        $("mText").textContent = text;
+        $("modal").classList.add("show");
+        render();
+      }
+
+      function setActive(rowId, attr, val) {
+        document.querySelectorAll(`#${rowId} .btn`).forEach((b) =>
+          b.classList.toggle("active", b.dataset[attr] === val));
+      }
+
+      document.querySelectorAll("#modeRow .btn").forEach((b) => b.addEventListener("click", () => {
+        mode = b.dataset.mode;
+        store.set("mem_mode", mode);
+        setActive("modeRow", "mode", mode);
+        newGame();
+      }));
+      document.querySelectorAll("#levelRow .btn").forEach((b) => b.addEventListener("click", () => {
+        level = b.dataset.level;
+        store.set("mem_level", level);
+        setActive("levelRow", "level", level);
+        newGame();
+      }));
+      $("newBtn").addEventListener("click", newGame);
+      $("mBtn").addEventListener("click", newGame);
+
+      setActive("modeRow", "mode", mode);
+      setActive("levelRow", "level", level);
+      newGame();
+    })();
+  </script>
+</body>
+</html>

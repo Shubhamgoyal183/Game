@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Guess the Number – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+  <style>
+    .big-q {
+      text-align: center;
+      font-size: clamp(3rem, 16vw, 4.5rem);
+      font-weight: 800;
+      color: var(--accent);
+    }
+    .range { text-align: center; color: var(--muted); margin-top: 4px; }
+    form.guess {
+      display: flex;
+      gap: 10px;
+      width: 100%;
+      max-width: 440px;
+    }
+    form.guess input {
+      flex: 1;
+      min-width: 0;
+      background: var(--card);
+      border: 2px solid rgba(255, 255, 255, 0.12);
+      border-radius: 999px;
+      color: var(--text);
+      font: inherit;
+      font-size: 1.2rem;
+      font-weight: 700;
+      padding: 12px 20px;
+      text-align: center;
+      outline: none;
+    }
+    form.guess input:focus { border-color: var(--accent); }
+    form.guess input::-webkit-outer-spin-button,
+    form.guess input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    form.guess input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+    .meter {
+      height: 10px;
+      background: var(--bg);
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 12px;
+    }
+    .meter div {
+      height: 100%;
+      width: 100%;
+      background: var(--good);
+      transition: width 0.3s, background 0.3s;
+    }
+    .history {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      max-width: 440px;
+    }
+    .chip {
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 0.9rem;
+      background: var(--card);
+    }
+    .chip.low { border: 1px solid var(--accent-2); color: var(--accent-2); }
+    .chip.high { border: 1px solid var(--bad); color: var(--bad); }
+    .chip.hit { background: var(--good); color: #0f1020; }
+    .shake { animation: shake 0.35s; }
+    @keyframes shake {
+      25% { transform: translateX(-8px); }
+      75% { transform: translateX(8px); }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🔢 Guess the Number</h1>
+    <span class="spacer"></span>
+  </header>
+
+  <main class="stage">
+    <div class="row" id="levelRow">
+      <button class="btn small" data-level="easy">Easy (1–50)</button>
+      <button class="btn small" data-level="medium">Medium (1–100)</button>
+      <button class="btn small" data-level="hard">Hard (1–1000)</button>
+    </div>
+
+    <div class="panel">
+      <div class="big-q" id="secret">?</div>
+      <div class="range" id="rangeText"></div>
+      <div class="meter"><div id="meter"></div></div>
+      <div class="range" id="triesText"></div>
+    </div>
+
+    <div class="status" id="status"></div>
+
+    <form class="guess" id="form" autocomplete="off">
+      <input type="number" id="input" inputmode="numeric" placeholder="Number likho" required>
+      <button class="btn primary" type="submit">Guess</button>
+    </form>
+
+    <div class="history" id="history"></div>
+
+    <div class="row">
+      <button class="btn" id="newBtn">🔄 New Game</button>
+    </div>
+    <div class="muted" id="bestText"></div>
+  </main>
+
+  <p class="credit">Game Zone by Shubham Goyal</p>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const LEVELS = {
+        easy: { max: 50, tries: 8 },
+        medium: { max: 100, tries: 7 },
+        hard: { max: 1000, tries: 10 },
+      };
+
+      const $ = (id) => document.getElementById(id);
+      const input = $("input");
+
+      let level = store.get("guess_level", "medium");
+      let secret, triesLeft, lo, hi, over, guesses;
+
+      function newGame() {
+        const L = LEVELS[level];
+        secret = 1 + Math.floor(Math.random() * L.max);
+        triesLeft = L.tries;
+        lo = 1;
+        hi = L.max;
+        over = false;
+        guesses = [];
+        $("secret").textContent = "?";
+        $("secret").style.color = "";
+        $("status").innerHTML = `<span class="muted">Maine 1 se ${L.max} ke beech ek number socha hai</span>`;
+        $("history").innerHTML = "";
+        input.value = "";
+        input.disabled = false;
+        input.min = 1;
+        input.max = L.max;
+        render();
+        if (window.matchMedia("(pointer: fine)").matches) input.focus();
+      }
+
+      function render() {
+        const L = LEVELS[level];
+        $("rangeText").textContent = `Range: ${lo} – ${hi}`;
+        $("triesText").textContent = `Bache hue chances: ${triesLeft} / ${L.tries}`;
+        const pct = (triesLeft / L.tries) * 100;
+        $("meter").style.width = pct + "%";
+        $("meter").style.background = pct > 50 ? "var(--good)" : pct > 25 ? "var(--accent)" : "var(--bad)";
+        const best = store.get("guess_best_" + level, null);
+        $("bestText").textContent = best ? `🏆 Best (${level}): ${best} guesses mein` : "";
+      }
+
+      function heat(diff) {
+        const ratio = diff / LEVELS[level].max;
+        if (ratio <= 0.03) return "🔥 Bahut garam!";
+        if (ratio <= 0.1) return "♨️ Garam";
+        if (ratio <= 0.25) return "🌤️ Thoda door";
+        return "🧊 Bahut thanda";
+      }
+
+      function addChip(n, cls) {
+        const chip = document.createElement("span");
+        chip.className = "chip " + cls;
+        chip.textContent = n + (cls === "low" ? " ↑" : cls === "high" ? " ↓" : " ✓");
+        $("history").appendChild(chip);
+      }
+
+      function shake(el) {
+        el.classList.remove("shake");
+        void el.offsetWidth;
+        el.classList.add("shake");
+      }
+
+      $("form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        if (over) return;
+        const max = LEVELS[level].max;
+        const n = parseInt(input.value, 10);
+        if (isNaN(n) || n < 1 || n > max) {
+          $("status").innerHTML = `<span class="bad">1 se ${max} ke beech ka number likho</span>`;
+          shake(input);
+          return;
+        }
+        if (guesses.includes(n)) {
+          $("status").innerHTML = `<span class="muted">${n} pehle hi try kar chuke ho!</span>`;
+          shake(input);
+          input.select();
+          return;
+        }
+
+        guesses.push(n);
+        triesLeft--;
+        input.value = "";
+
+        if (n === secret) {
+          over = true;
+          addChip(n, "hit");
+          $("secret").textContent = secret;
+          $("secret").style.color = "var(--good)";
+          $("status").innerHTML = `<span class="good">🎉 Sahi jawab! ${guesses.length} guesses mein</span>`;
+          const best = store.get("guess_best_" + level, null);
+          if (!best || guesses.length < best) store.set("guess_best_" + level, guesses.length);
+          input.disabled = true;
+          render();
+          return;
+        }
+
+        if (n < secret) { lo = Math.max(lo, n + 1); addChip(n, "low"); }
+        else { hi = Math.min(hi, n - 1); addChip(n, "high"); }
+
+        if (triesLeft === 0) {
+          over = true;
+          $("secret").textContent = secret;
+          $("secret").style.color = "var(--bad)";
+          $("status").innerHTML = `<span class="bad">😢 Chances khatam! Number tha ${secret}</span>`;
+          input.disabled = true;
+        } else {
+          const dir = n < secret ? "⬆️ Bada number try karo" : "⬇️ Chhota number try karo";
+          $("status").innerHTML = `${dir} <span class="muted">· ${heat(Math.abs(n - secret))}</span>`;
+          shake($("secret"));
+        }
+        render();
+      });
+
+      function setLevel(l) {
+        level = l;
+        store.set("guess_level", l);
+        document.querySelectorAll("#levelRow .btn").forEach((b) =>
+          b.classList.toggle("active", b.dataset.level === l));
+        newGame();
+      }
+
+      document.querySelectorAll("#levelRow .btn").forEach((b) =>
+        b.addEventListener("click", () => setLevel(b.dataset.level)));
+      $("newBtn").addEventListener("click", newGame);
+
+      setLevel(level);
+    })();
+  </script>
+</body>
+</html>

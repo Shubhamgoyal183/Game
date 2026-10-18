@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Traffic Dodge – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+</head>
+<body class="fullscreen">
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🐔 Traffic Dodge</h1>
+    <span class="spacer"></span>
+  </header>
+  <main class="stage">
+    <div class="canvas-wrap" id="wrap"><canvas id="game"></canvas></div>
+    <div class="hint" id="hint">Arrow keys / WASD se kudo · Sadak, nadi aur railway paar karo!</div>
+  </main>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const COLS = 9, CELL = 40, W = COLS * CELL, H = 640;
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const wrap = document.getElementById("wrap");
+      if (IS_TOUCH) document.getElementById("hint").textContent = "Tap = aage kudo · Swipe = left / right / peeche";
+
+      const CAR_COLORS = ["#ef4444", "#3b82f6", "#f59e0b", "#a855f7", "#10b981", "#ec4899", "#f8fafc"];
+      let rows, player, camRow, state, best, score, started, deathT, deathMsg, runType, runLeft;
+      best = store.get("dodge_best", 0);
+
+      // ---------- Lanes ----------
+      function pickRun(r) {
+        const roll = Math.random();
+        if (roll < 0.3) { runType = "grass"; runLeft = 1 + Math.floor(Math.random() * 2); }
+        else if (roll < 0.65) { runType = "road"; runLeft = 1 + Math.floor(Math.random() * 4); }
+        else if (roll < 0.88) { runType = "water"; runLeft = 1 + Math.floor(Math.random() * 3); }
+        else { runType = "rail"; runLeft = 1; }
+        // Do khatarnak lanes ke beech ghaas ka aaraam
+        if (rows.get(r - 1) && rows.get(r - 1).type !== "grass" && runType !== "grass" && Math.random() < 0.4) {
+          runType = "grass"; runLeft = 1;
+        }
+      }
+
+      function makeRow(r) {
+        if (r < 4) return { type: "grass", trees: r === 0 ? [0, 8] : [] };
+        if (runLeft <= 0) pickRun(r);
+        runLeft--;
+        const diff = Math.min(1, r / 300);
+        const dir = Math.random() < 0.5 ? -1 : 1;
+        if (runType === "grass") {
+          const trees = [];
+          for (let c = 0; c < COLS; c++) if (Math.random() < 0.2 && trees.length < 3) trees.push(c);
+          return { type: "grass", trees };
+        }
+        if (runType === "road") {
+          const speed = (60 + Math.random() * 70 + diff * 140) * dir;
+          const items = [];
+          const n = 1 + Math.floor(Math.random() * (2 + diff * 2));
+          const loop = W + 200;
+          for (let i = 0; i < n; i++) {
+            const truck = Math.random() < 0.25;
+            items.push({ x: -100 + (loop / n) * i + Math.random() * 40, w: truck ? 86 : 50, color: CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)], truck });
+          }
+          return { type: "road", speed, items };
+        }
+        if (runType === "water") {
+          const speed = (40 + Math.random() * 50 + diff * 40) * dir;
+          const items = [];
+          const n = 2 + Math.floor(Math.random() * 2);
+          const loop = W + 200;
+          for (let i = 0; i < n; i++) items.push({ x: -100 + (loop / n) * i, w: 90 + Math.random() * 60 - diff * 20 });
+          return { type: "water", speed, items };
+        }
+        return { type: "rail", speed: 900 * dir, items: [], timer: 2 + Math.random() * 4, train: null };
+      }
+
+      function row(r) {
+        if (!rows.has(r)) rows.set(r, makeRow(r));
+        return rows.get(r);
+      }
+
+      function reset() {
+        rows = new Map();
+        runLeft = 0;
+        for (let r = -2; r < 25; r++) row(r);
+        player = { x: CELL * 4 + CELL / 2, row: 0, hop: null, queue: null, face: 0, log: null, maxRow: 0 };
+        camRow = -3;
+        state = "play";
+        score = 0;
+        started = false;
+        deathT = 0;
+      }
+
+      // ---------- Movement ----------
+      function hop(dx, dr) {
+        if (state !== "play") return;
+        if (player.hop) { player.queue = [dx, dr]; return; }
+        started = true;
+        player.face = dx < 0 ? -1 : dx > 0 ? 1 : dr < 0 ? 2 : 0;
+        let tx = player.x + dx * CELL;
+        const tr = player.row + dr;
+        const lane = row(tr);
+        if (lane.type !== "water") tx = Math.round((tx - CELL / 2) / CELL) * CELL + CELL / 2;
+        if (tx < CELL / 2 - 1 || tx > W - CELL / 2 + 1) return;
+        if (lane.type === "grass" && lane.trees.includes(Math.floor(tx / CELL))) return; // ped se ruk gaye
+        player.hop = { fx: player.x, fr: player.row, tx, tr, t: 0 };
+        player.log = null;
+        sound.beep(500, 0.05, "square", 0.03, 700);
+      }
+
+      function die(msg) {
+        if (state !== "play") return;
+        state = "dying";
+        deathT = 0;
+        deathMsg = msg;
+        sound.beep(150, 0.35, "sawtooth", 0.07, 60);
+        if (navigator.vibrate) navigator.vibrate(120);
+      }
+
+      function land() {
+        const lane = row(player.row);
+        if (lane.type === "water") {
+          const log = lane.items.find((l) => player.x > l.x + 4 && player.x < l.x + l.w - 4);
+          if (!log) return die("💦 Paani mein gir gaye!");
+          player.log = log;
+        }
+        if (player.row > player.maxRow) {
+          player.maxRow = player.row;
+          score = player.maxRow;
+        }
+      }
+
+      function moveItems(lane, dt) {
+        const loop = W + 200;
+        for (const it of lane.items) {
+          it.x += lane.speed * dt;
+          if (lane.speed > 0 && it.x > W + 100) it.x -= loop + it.w;
+          if (lane.speed < 0 && it.x + it.w < -100) it.x += loop + it.w;
+        }
+      }
+
+      function update(dt) {
+        if (state === "dying") {
+          deathT += dt;
+          if (deathT > 0.8 && state === "dying") {
+            state = "over";
+            if (score > best) { best = score; store.set("dodge_best", best); }
+          }
+          return;
+        }
+        if (state !== "play") return;
+
+        const top = Math.ceil(camRow) + 20;
+        for (let r = Math.floor(camRow) - 1; r < top; r++) {
+          const lane = row(r);
+          if (lane.type === "road" || lane.type === "water") moveItems(lane, dt);
+          if (lane.type === "rail") {
+            if (lane.train) {
+              lane.train.x += lane.speed * dt;
+              if ((lane.speed > 0 && lane.train.x > W + 50) || (lane.speed < 0 && lane.train.x + lane.train.w < -50)) {
+                lane.train = null;
+                lane.timer = 3 + Math.random() * 4;
+              }
+            } else {
+              lane.timer -= dt;
+              if (lane.timer <= 0) lane.train = { x: lane.speed > 0 ? -700 : W + 50, w: 650 };
+            }
+          }
+        }
+        // Purani lanes hatao (memory bachao)
+        for (const k of rows.keys()) if (k < camRow - 6) rows.delete(k);
+
+        // Hop animation
+        if (player.hop) {
+          const h = player.hop;
+          h.t += dt / 0.11;
+          if (h.t >= 1) {
+            player.x = h.tx;
+            player.row = h.tr;
+            player.hop = null;
+            land();
+            if (player.queue && state === "play") { const q = player.queue; player.queue = null; hop(...q); }
+          }
+        }
+
+        // Lakdi par baithe ho toh saath mein bahoge
+        if (player.log && !player.hop) {
+          player.x += row(player.row).speed * dt;
+          if (player.x < 6 || player.x > W - 6) die("🌊 Nadi mein beh gaye!");
+        }
+
+        // Takkar check
+        const pr = player.hop ? (player.hop.t > 0.5 ? player.hop.tr : player.hop.fr) : player.row;
+        const px = player.hop ? player.hop.fx + (player.hop.tx - player.hop.fx) * player.hop.t : player.x;
+        const lane = row(pr);
+        if (lane.type === "road") {
+          for (const c of lane.items) if (px + 12 > c.x && px - 12 < c.x + c.w) return die("🚗 Gaadi se takkar!");
+        }
+        if (lane.type === "rail" && lane.train) {
+          const t = lane.train;
+          if (px + 12 > t.x && px - 12 < t.x + t.w) return die("🚆 Train aa gayi!");
+        }
+
+        // Camera: player ke saath upar chalta hai, aur dheere-dheere khud bhi
+        const want = player.row - 4;
+        if (want > camRow) camRow += (want - camRow) * Math.min(1, dt * 4);
+        if (started) camRow += Math.min(1.1, 0.22 + score * 0.004) * dt;
+        if (player.row < camRow - 0.3) die("🦅 Bahut der ruk gaye!");
+      }
+
+      // ---------- Draw ----------
+      const rowY = (r) => H - (r - camRow + 1) * CELL;
+
+      function rr(x, y, w, h, r) {
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r);
+        ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r);
+        ctx.arcTo(x, y, x + w, y, r);
+        ctx.closePath();
+      }
+
+      function drawCar(c, y, dir) {
+        const h = 28, top = y + 6;
+        ctx.fillStyle = "rgba(0,0,0,0.25)";
+        rr(c.x + 3, top + 4, c.w, h, 6); ctx.fill();
+        ctx.fillStyle = "#111";
+        ctx.fillRect(c.x + 8, top - 2, 10, 4);
+        ctx.fillRect(c.x + c.w - 18, top - 2, 10, 4);
+        ctx.fillRect(c.x + 8, top + h - 2, 10, 4);
+        ctx.fillRect(c.x + c.w - 18, top + h - 2, 10, 4);
+        ctx.fillStyle = c.color;
+        rr(c.x, top, c.w, h, 6); ctx.fill();
+        ctx.fillStyle = "rgba(20,30,50,0.85)";
+        if (c.truck) {
+          const cab = dir > 0 ? c.x + c.w - 22 : c.x + 4;
+          ctx.fillRect(cab + 4, top + 4, 10, h - 8);
+          ctx.fillStyle = "#e2e8f0";
+          ctx.fillRect(dir > 0 ? c.x + 2 : c.x + 26, top + 2, c.w - 28, h - 4);
+        } else {
+          ctx.fillRect(c.x + c.w / 2 - 10, top + 4, 20, h - 8);
+        }
+        ctx.fillStyle = "#fff7c2";
+        const fx = dir > 0 ? c.x + c.w - 4 : c.x;
+        ctx.fillRect(fx, top + 3, 4, 6);
+        ctx.fillRect(fx, top + h - 9, 4, 6);
+      }
+
+      function drawChicken(x, y, lift, face) {
+        ctx.save();
+        ctx.translate(x, y - lift);
+        if (face === -1) ctx.scale(-1, 1);
+        // shadow
+        ctx.fillStyle = "rgba(0,0,0,0.25)";
+        ctx.beginPath();
+        ctx.ellipse(0, 14 + lift, 12, 5, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#fff";
+        rr(-12, -10, 24, 24, 7); ctx.fill();
+        ctx.fillStyle = "#e5e7eb";
+        rr(-12, 2, 10, 10, 4); ctx.fill();
+        ctx.fillStyle = "#ef4444";
+        ctx.fillRect(-4, -15, 8, 6);
+        ctx.fillStyle = "#f59e0b";
+        if (face === 2) ctx.fillRect(-3, 8, 6, 6); // peeche dekh raha
+        else if (face === 0) ctx.fillRect(-3, -12, 6, 5);
+        else ctx.fillRect(11, -2, 6, 5);
+        ctx.fillStyle = "#111";
+        if (face === 0 || face === 2) { ctx.fillRect(-7, -5, 3, 3); ctx.fillRect(4, -5, 3, 3); }
+        else ctx.fillRect(5, -5, 3, 3);
+        ctx.restore();
+      }
+
+      function draw() {
+        const startRow = Math.floor(camRow) - 1;
+        for (let r = startRow; r < startRow + H / CELL + 2; r++) {
+          const lane = row(r);
+          const y = rowY(r);
+          if (lane.type === "grass") {
+            ctx.fillStyle = r % 2 ? "#8bd14f" : "#82c946";
+            ctx.fillRect(0, y, W, CELL);
+          } else if (lane.type === "road") {
+            ctx.fillStyle = "#4b5563";
+            ctx.fillRect(0, y, W, CELL);
+            const below = row(r - 1);
+            if (below.type === "road") {
+              ctx.fillStyle = "rgba(255,255,255,0.6)";
+              for (let x = 6; x < W; x += 40) ctx.fillRect(x, y + CELL - 2, 20, 3);
+            }
+          } else if (lane.type === "water") {
+            ctx.fillStyle = "#38bdf8";
+            ctx.fillRect(0, y, W, CELL);
+            ctx.fillStyle = "rgba(255,255,255,0.25)";
+            for (let x = (r * 37) % 60; x < W; x += 60) ctx.fillRect(x, y + 12 + (r % 3) * 6, 18, 2);
+          } else {
+            ctx.fillStyle = "#a8a29e";
+            ctx.fillRect(0, y, W, CELL);
+            ctx.fillStyle = "#78350f";
+            for (let x = 4; x < W; x += 20) ctx.fillRect(x, y + 6, 8, CELL - 12);
+            ctx.fillStyle = "#6b7280";
+            ctx.fillRect(0, y + 11, W, 4);
+            ctx.fillRect(0, y + CELL - 15, W, 4);
+          }
+        }
+
+        // Cheezein (ped, lakdi, gaadi, train) — upar se neeche, taaki paas wali upar dikhe
+        for (let r = startRow + Math.ceil(H / CELL) + 1; r >= startRow; r--) {
+          const lane = row(r);
+          const y = rowY(r);
+          if (lane.type === "grass") {
+            for (const c of lane.trees) {
+              const x = c * CELL;
+              ctx.fillStyle = "#6b4423";
+              ctx.fillRect(x + 16, y + 22, 8, 14);
+              ctx.fillStyle = "#166534";
+              ctx.beginPath(); ctx.arc(x + 20, y + 16, 15, 0, Math.PI * 2); ctx.fill();
+              ctx.fillStyle = "#22863a";
+              ctx.beginPath(); ctx.arc(x + 16, y + 12, 8, 0, Math.PI * 2); ctx.fill();
+            }
+          } else if (lane.type === "water") {
+            for (const l of lane.items) {
+              ctx.fillStyle = "#92400e";
+              rr(l.x, y + 7, l.w, CELL - 14, 10); ctx.fill();
+              ctx.fillStyle = "#b45309";
+              ctx.fillRect(l.x + 8, y + 12, l.w - 16, 3);
+              ctx.fillRect(l.x + 14, y + 22, l.w - 28, 3);
+            }
+          } else if (lane.type === "road") {
+            for (const c of lane.items) drawCar(c, y, Math.sign(lane.speed));
+          } else if (lane.type === "rail") {
+            const warn = lane.train || lane.timer < 1.2;
+            ctx.fillStyle = warn && Math.floor(performance.now() / 150) % 2 ? "#ef4444" : "#57534e";
+            ctx.beginPath(); ctx.arc(lane.speed > 0 ? 12 : W - 12, y + 8, 6, 0, Math.PI * 2); ctx.fill();
+            if (lane.train) {
+              const t = lane.train;
+              ctx.fillStyle = "rgba(0,0,0,0.3)";
+              ctx.fillRect(t.x + 4, y + 8, t.w, CELL - 8);
+              for (let i = 0; i < t.w; i += 130) {
+                ctx.fillStyle = i === (lane.speed > 0 ? Math.floor((t.w - 1) / 130) * 130 : 0) ? "#dc2626" : "#1d4ed8";
+                rr(t.x + i, y + 3, 124, CELL - 6, 6); ctx.fill();
+                ctx.fillStyle = "#bfdbfe";
+                for (let wx = 10; wx < 110; wx += 26) ctx.fillRect(t.x + i + wx, y + 10, 16, 8);
+              }
+            }
+          }
+          if (player.row === r && !player.hop) drawPlayerNow();
+        }
+        if (player.hop) drawPlayerNow();
+
+        // HUD
+        ctx.fillStyle = "rgba(0,0,0,0.4)";
+        rr(10, 10, W - 20, 40, 10); ctx.fill();
+        ctx.font = '800 22px "Segoe UI", sans-serif';
+        ctx.textBaseline = "middle";
+        ctx.textAlign = "left";
+        ctx.fillStyle = "#fff";
+        ctx.fillText(`🐔 ${score}`, 22, 31);
+        ctx.textAlign = "right";
+        ctx.font = '700 15px "Segoe UI", sans-serif';
+        ctx.fillStyle = "#ffcc33";
+        ctx.fillText(`Best: ${best}`, W - 22, 31);
+
+        if (!started && state === "play") {
+          banner("Traffic Dodge", IS_TOUCH ? "Tap karke kudna shuru karo" : "↑ dabake kudna shuru karo");
+        }
+        if (state === "over") {
+          ctx.fillStyle = "rgba(15,16,32,0.65)";
+          ctx.fillRect(0, 0, W, H);
+          banner(deathMsg, `Score: ${score} · Best: ${best}`, IS_TOUCH ? "Tap = dobara" : "Space = dobara");
+        }
+      }
+
+      function drawPlayerNow() {
+        let x = player.x, y = rowY(player.row) + CELL / 2, lift = 0;
+        if (player.hop) {
+          const h = player.hop;
+          x = h.fx + (h.tx - h.fx) * h.t;
+          y = rowY(h.fr + (h.tr - h.fr) * h.t) + CELL / 2;
+          lift = Math.sin(h.t * Math.PI) * 10;
+        }
+        if (state === "dying" || state === "over") {
+          ctx.save();
+          ctx.translate(x, y);
+          ctx.scale(1.3, 0.35);
+          drawChicken(0, 0, 0, player.face);
+          ctx.restore();
+          return;
+        }
+        drawChicken(x, y, lift, player.face);
+      }
+
+      function banner(title, sub, sub2) {
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.lineJoin = "round";
+        const lines = [[title, 30, "#fff"], [sub, 18, "#ffcc33"], [sub2, 16, "#cbd5e1"]];
+        lines.forEach(([t, s, c], i) => {
+          if (!t) return;
+          ctx.font = `800 ${s}px "Segoe UI", sans-serif`;
+          ctx.lineWidth = s / 4;
+          ctx.strokeStyle = "rgba(0,0,0,0.75)";
+          ctx.strokeText(t, W / 2, H / 2 - 40 + i * 40);
+          ctx.fillStyle = c;
+          ctx.fillText(t, W / 2, H / 2 - 40 + i * 40);
+        });
+      }
+
+      // ---------- Input ----------
+      const KEYS = {
+        ArrowUp: [0, 1], KeyW: [0, 1], ArrowDown: [0, -1], KeyS: [0, -1],
+        ArrowLeft: [-1, 0], KeyA: [-1, 0], ArrowRight: [1, 0], KeyD: [1, 0],
+      };
+      window.addEventListener("keydown", (e) => {
+        if (KEYS[e.code]) { e.preventDefault(); if (!e.repeat) hop(...KEYS[e.code]); }
+        if ((e.code === "Space" || e.code === "Enter") && state === "over") { e.preventDefault(); reset(); }
+        if (e.code === "Space") e.preventDefault();
+      });
+
+      let sx = null, sy = null;
+      canvas.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        sound.unlock();
+        if (state === "over") { reset(); return; }
+        sx = e.clientX; sy = e.clientY;
+      });
+      window.addEventListener("pointerup", (e) => {
+        if (sx === null) return;
+        const dx = e.clientX - sx, dy = e.clientY - sy;
+        sx = sy = null;
+        if (Math.hypot(dx, dy) < 24) return hop(0, 1); // tap = aage
+        if (Math.abs(dx) > Math.abs(dy)) hop(dx > 0 ? 1 : -1, 0);
+        else hop(0, dy < 0 ? 1 : -1);
+      });
+
+      // ---------- Loop ----------
+      let last = performance.now();
+      function loop(now) {
+        const dt = Math.min((now - last) / 1000, 1 / 30);
+        last = now;
+        update(dt);
+        draw();
+        requestAnimationFrame(loop);
+      }
+      document.addEventListener("visibilitychange", () => { last = performance.now(); });
+      const resize = () => fitCanvas(canvas, ctx, wrap, W, H);
+      window.addEventListener("resize", resize);
+      resize();
+      reset();
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>

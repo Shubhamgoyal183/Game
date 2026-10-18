@@ -1,0 +1,19 @@
+{
+  "name": "Game Zone by Shubham Goyal",
+  "short_name": "Game Zone",
+  "description": "23+ free games jo bina internet ke mobile aur laptop par chalte hain.",
+  "id": "./",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f1020",
+  "theme_color": "#0f1020",
+  "lang": "hi",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

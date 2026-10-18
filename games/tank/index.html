@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Tank Battle – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+  <style>
+    .tscore { display: flex; gap: 18px; align-items: center; font-weight: 800; font-size: 1.3rem; }
+    .tscore .g { color: #4ade80; }
+    .tscore .o { color: #fb923c; }
+    .pad {
+      display: none;
+      width: 100%;
+      max-width: 520px;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      touch-action: none;
+    }
+    body.touch .pad.show { display: flex; }
+    .pad.flip { transform: rotate(180deg); }
+    .dir {
+      display: grid;
+      grid-template-columns: repeat(3, 54px);
+      grid-template-rows: repeat(2, 46px);
+      gap: 6px;
+    }
+    .pad button {
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      background: var(--card);
+      color: #fff;
+      border-radius: 12px;
+      font-size: 1.3rem;
+      touch-action: none;
+    }
+    .pad button.on { background: var(--accent); color: #111; }
+    .pad .fwd { grid-column: 2; grid-row: 1; }
+    .pad .rl { grid-column: 1; grid-row: 1 / span 2; }
+    .pad .rr { grid-column: 3; grid-row: 1 / span 2; }
+    .pad .back { grid-column: 2; grid-row: 2; }
+    .pad .fire { width: 96px; height: 96px; border-radius: 50%; font-size: 1.1rem; font-weight: 800; }
+    .pad.g .fire { background: #166534; }
+    .pad.o .fire { background: #9a3412; }
+  </style>
+</head>
+<body class="fullscreen">
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🪖 Tank Battle</h1>
+    <span class="spacer"></span>
+  </header>
+  <main class="stage">
+    <div class="row" id="modeRow">
+      <button class="btn small" data-mode="cpu">🤖 vs Computer</button>
+      <button class="btn small" data-mode="2p">👥 2 Players</button>
+    </div>
+    <div class="pad o flip" id="pad2"></div>
+    <div class="tscore"><span class="g" id="s1">Green 0</span><span class="muted">–</span><span class="o" id="s2">0 Orange</span></div>
+    <div class="canvas-wrap" id="wrap"><canvas id="game"></canvas></div>
+    <div class="pad g" id="pad1"></div>
+    <div class="hint" id="hint"></div>
+  </main>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const CELL = 40, COLS = 20, ROWS = 12, W = COLS * CELL, H = ROWS * CELL;
+      const TANK_R = 14, SPEED = 135, BACK = 85, ROT = 3.2;
+      const B_SPEED = 300, B_LIFE = 5, MAX_B = 4, COOLDOWN = 0.35, WIN = 5;
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const wrap = document.getElementById("wrap");
+      if (IS_TOUCH) document.body.classList.add("touch");
+
+      const MAPS = [
+        [
+          "....................",
+          "....................",
+          "..##....####....##..",
+          "..#..............#..",
+          "......##....##......",
+          ".........##.........",
+          ".........##.........",
+          "......##....##......",
+          "..#..............#..",
+          "..##....####....##..",
+          "....................",
+          "....................",
+        ],
+        [
+          "....................",
+          "....#..........#....",
+          "....#...####...#....",
+          "....#..........#....",
+          "..........##........",
+          "..###.........###...",
+          "...###.........###..",
+          "........##..........",
+          "....#..........#....",
+          "....#...####...#....",
+          "....#..........#....",
+          "....................",
+        ],
+        [
+          "....................",
+          "...######..######...",
+          "....................",
+          "..#......##......#..",
+          "..#..#........#..#..",
+          ".....#..####..#.....",
+          ".....#..####..#.....",
+          "..#..#........#..#..",
+          "..#......##......#..",
+          "....................",
+          "...######..######...",
+          "....................",
+        ],
+      ];
+
+      let mode = store.get("tank_mode", "cpu");
+      let grid, tanks, bullets, parts, wins, state, roundT, mapIdx = 0, msg;
+
+      const solid = (cx, cy) => cx < 0 || cy < 0 || cx >= COLS || cy >= ROWS || grid[cy][cx] === "#";
+      const solidAt = (x, y) => solid(Math.floor(x / CELL), Math.floor(y / CELL));
+
+      function makeTank(id, x, y, a, color) {
+        return { id, x, y, a, color, alive: true, cd: 0, input: { fwd: 0, back: 0, left: 0, right: 0, fire: 0 }, ai: { t: 0, way: null } };
+      }
+
+      function newRound() {
+        mapIdx = (mapIdx + 1) % MAPS.length;
+        grid = MAPS[mapIdx];
+        tanks = [
+          makeTank(1, CELL * 1, H / 2, 0, "#22c55e"),
+          makeTank(2, W - CELL * 1, H / 2, Math.PI, "#f97316"),
+        ];
+        bullets = [];
+        state = "count";
+        roundT = 1.2;
+        applyInput();
+      }
+
+      function resetMatch() {
+        wins = { 1: 0, 2: 0 };
+        parts = [];
+        msg = "";
+        renderScore();
+        newRound();
+      }
+
+      function renderScore() {
+        const n2 = mode === "cpu" ? "CPU" : "Orange";
+        document.getElementById("s1").textContent = `Green ${wins[1]}`;
+        document.getElementById("s2").textContent = `${wins[2]} ${n2}`;
+      }
+
+      // ---------- Physics ----------
+      function hitsWall(x, y) {
+        const minX = Math.floor((x - TANK_R) / CELL), maxX = Math.floor((x + TANK_R) / CELL);
+        const minY = Math.floor((y - TANK_R) / CELL), maxY = Math.floor((y + TANK_R) / CELL);
+        for (let cy = minY; cy <= maxY; cy++)
+          for (let cx = minX; cx <= maxX; cx++) {
+            if (!solid(cx, cy)) continue;
+            const nx = Math.max(cx * CELL, Math.min(x, cx * CELL + CELL));
+            const ny = Math.max(cy * CELL, Math.min(y, cy * CELL + CELL));
+            if ((nx - x) ** 2 + (ny - y) ** 2 < TANK_R * TANK_R) return true;
+          }
+        return false;
+      }
+
+      function fire(t) {
+        if (t.cd > 0 || !t.alive) return;
+        if (bullets.filter((b) => b.owner === t.id).length >= MAX_B) return;
+        t.cd = COOLDOWN;
+        const bx = t.x + Math.cos(t.a) * (TANK_R + 8), by = t.y + Math.sin(t.a) * (TANK_R + 8);
+        // Nali deewar ke andar ho toh goli mat chalao
+        if (solidAt(bx, by)) return;
+        bullets.push({ x: bx, y: by, vx: Math.cos(t.a) * B_SPEED, vy: Math.sin(t.a) * B_SPEED, owner: t.id, age: 0, bounces: 0 });
+        sound.beep(220, 0.08, "square", 0.05, 120);
+      }
+
+      function boom(t) {
+        t.alive = false;
+        for (let i = 0; i < 30; i++) {
+          const a = Math.random() * Math.PI * 2, s = 40 + Math.random() * 200;
+          parts.push({ x: t.x, y: t.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.6 + Math.random() * 0.6, max: 1.2, c: Math.random() < 0.5 ? "255,160,40" : "90,90,90", r: 3 + Math.random() * 4 });
+        }
+        sound.beep(80, 0.5, "sawtooth", 0.09, 30);
+        if (navigator.vibrate) navigator.vibrate(150);
+      }
+
+      function updateTank(t, dt) {
+        t.cd = Math.max(0, t.cd - dt);
+        if (!t.alive) return;
+        const inp = t.input;
+        t.a += ((inp.right ? 1 : 0) - (inp.left ? 1 : 0)) * ROT * dt;
+        const v = inp.fwd ? SPEED : inp.back ? -BACK : 0;
+        const nx = t.x + Math.cos(t.a) * v * dt, ny = t.y + Math.sin(t.a) * v * dt;
+        if (!hitsWall(nx, t.y)) t.x = nx;
+        if (!hitsWall(t.x, ny)) t.y = ny;
+        if (inp.fire) fire(t);
+      }
+
+      function updateBullets(dt) {
+        for (const b of bullets) {
+          b.age += dt;
+          const steps = 3;
+          for (let i = 0; i < steps; i++) {
+            const h = dt / steps;
+            const ox = b.x, oy = b.y;
+            let nx = ox + b.vx * h, ny = oy + b.vy * h;
+            if (solidAt(nx, ny)) {
+              const hx = solidAt(nx, oy), hy = solidAt(ox, ny);
+              if (hx) b.vx = -b.vx;
+              if (hy) b.vy = -b.vy;
+              if (!hx && !hy) { b.vx = -b.vx; b.vy = -b.vy; }
+              b.bounces++;
+              nx = ox; ny = oy;
+              sound.beep(700, 0.03, "square", 0.02);
+            }
+            b.x = nx; b.y = ny;
+            if (state !== "play") continue; // round ka faisla ho chuka, ab point nahi
+            for (const t of tanks) {
+              if (!t.alive) continue;
+              if (t.id === b.owner && b.age < 0.15) continue;
+              if ((t.x - b.x) ** 2 + (t.y - b.y) ** 2 < (TANK_R + 4) ** 2) {
+                b.age = 99;
+                boom(t);
+                // Apni hi goli lagi toh bhi point saamne wale ko
+                const winner = t.id === 1 ? 2 : 1;
+                wins[winner]++;
+                renderScore();
+                msg = t.id === b.owner ? "😅 Apni hi goli!" : `💥 ${name(winner)} ne maara!`;
+                state = "between";
+                roundT = 1.8;
+              }
+            }
+          }
+        }
+        bullets = bullets.filter((b) => b.age < B_LIFE && b.bounces < 6);
+      }
+
+      const name = (id) => (id === 1 ? "Green" : mode === "cpu" ? "Computer" : "Orange");
+
+      // ---------- Computer ----------
+      function lineOfSight(ax, ay, bx, by) {
+        const d = Math.hypot(bx - ax, by - ay), n = Math.ceil(d / 8);
+        for (let i = 1; i < n; i++) if (solidAt(ax + ((bx - ax) * i) / n, ay + ((by - ay) * i) / n)) return false;
+        return true;
+      }
+
+      function bfs(sx, sy, tx, ty) {
+        const prev = new Map(), q = [[sx, sy]], key = (x, y) => y * COLS + x;
+        prev.set(key(sx, sy), null);
+        while (q.length) {
+          const [x, y] = q.shift();
+          if (x === tx && y === ty) break;
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const nx = x + dx, ny = y + dy;
+            if (solid(nx, ny) || prev.has(key(nx, ny))) continue;
+            prev.set(key(nx, ny), [x, y]);
+            q.push([nx, ny]);
+          }
+        }
+        let cur = [tx, ty], path = [];
+        if (!prev.has(key(tx, ty))) return null;
+        while (cur) { path.unshift(cur); cur = prev.get(key(cur[0], cur[1])); }
+        return path;
+      }
+
+      const angDiff = (a, b) => Math.atan2(Math.sin(b - a), Math.cos(b - a));
+
+      function cpu(t, foe, dt) {
+        const inp = t.input;
+        inp.fwd = inp.back = inp.left = inp.right = inp.fire = 0;
+        if (!t.alive || !foe.alive) return;
+        const ai = t.ai;
+        ai.t -= dt;
+        const dist = Math.hypot(foe.x - t.x, foe.y - t.y);
+        let goalA;
+        if (lineOfSight(t.x, t.y, foe.x, foe.y)) {
+          goalA = Math.atan2(foe.y - t.y, foe.x - t.x);
+          const d = angDiff(t.a, goalA);
+          if (Math.abs(d) < 0.12) inp.fire = 1;
+          if (dist > 200) inp.fwd = Math.abs(d) < 0.6 ? 1 : 0;
+          else if (dist < 110) inp.back = 1;
+        } else {
+          if (ai.t <= 0 || !ai.way) {
+            ai.t = 0.4;
+            const path = bfs(Math.floor(t.x / CELL), Math.floor(t.y / CELL), Math.floor(foe.x / CELL), Math.floor(foe.y / CELL));
+            ai.way = path && path.length > 1 ? path[Math.min(2, path.length - 1)] : null;
+            // Kabhi-kabhi path ka pehla mod hi lo, taaki kono mein na atke
+            if (path && path.length > 2 && !lineOfSight(t.x, t.y, path[2][0] * CELL + 20, path[2][1] * CELL + 20)) ai.way = path[1];
+          }
+          if (ai.way) {
+            const wx = ai.way[0] * CELL + CELL / 2, wy = ai.way[1] * CELL + CELL / 2;
+            goalA = Math.atan2(wy - t.y, wx - t.x);
+            inp.fwd = Math.abs(angDiff(t.a, goalA)) < 0.5 ? 1 : 0;
+            if (Math.hypot(wx - t.x, wy - t.y) < 10) ai.t = 0;
+          }
+        }
+        if (goalA !== undefined) {
+          const d = angDiff(t.a, goalA);
+          if (d > 0.05) inp.right = 1;
+          else if (d < -0.05) inp.left = 1;
+        }
+      }
+
+      function update(dt) {
+        for (const q of parts) { q.x += q.vx * dt; q.y += q.vy * dt; q.vx *= 0.94; q.vy *= 0.94; q.life -= dt; }
+        parts = parts.filter((q) => q.life > 0);
+        if (state === "count") { roundT -= dt; if (roundT <= 0) state = "play"; return; }
+        if (state === "over") return;
+        if (mode === "cpu") cpu(tanks[1], tanks[0], dt);
+        tanks.forEach((t) => updateTank(t, dt));
+        updateBullets(dt);
+        if (state === "between") {
+          roundT -= dt;
+          if (roundT <= 0) {
+            if (wins[1] >= WIN || wins[2] >= WIN) { state = "over"; return; }
+            msg = "";
+            newRound();
+          }
+        }
+      }
+
+      // ---------- Draw ----------
+      function drawTank(t) {
+        ctx.save();
+        ctx.translate(t.x, t.y);
+        ctx.rotate(t.a);
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.fillRect(-14, -12, 30, 28);
+        ctx.fillStyle = "#1f2937";
+        ctx.fillRect(-16, -16, 32, 8);
+        ctx.fillRect(-16, 8, 32, 8);
+        ctx.fillStyle = "#4b5563";
+        for (let i = -14; i < 16; i += 6) { ctx.fillRect(i, -16, 2, 8); ctx.fillRect(i, 8, 2, 8); }
+        ctx.fillStyle = t.color;
+        ctx.fillRect(-13, -9, 26, 18);
+        ctx.fillStyle = "rgba(0,0,0,0.25)";
+        ctx.fillRect(-13, 4, 26, 5);
+        ctx.fillStyle = "#111827";
+        ctx.fillRect(0, -3, 24, 6);
+        ctx.fillStyle = t.color;
+        ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = "rgba(0,0,0,0.4)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      function text(t, x, y, size, color) {
+        ctx.font = `800 ${size}px "Segoe UI", sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.lineJoin = "round";
+        ctx.lineWidth = size / 4;
+        ctx.strokeStyle = "rgba(0,0,0,0.75)";
+        ctx.strokeText(t, x, y);
+        ctx.fillStyle = color;
+        ctx.fillText(t, x, y);
+      }
+
+      function draw() {
+        ctx.fillStyle = "#d6c7a1";
+        ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = "#cdbd95";
+        for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) if ((x + y) % 2) ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
+        for (let y = 0; y < ROWS; y++)
+          for (let x = 0; x < COLS; x++) {
+            if (grid[y][x] !== "#") continue;
+            const px = x * CELL, py = y * CELL;
+            ctx.fillStyle = "rgba(0,0,0,0.25)";
+            ctx.fillRect(px + 5, py + 5, CELL, CELL);
+          }
+        for (let y = 0; y < ROWS; y++)
+          for (let x = 0; x < COLS; x++) {
+            if (grid[y][x] !== "#") continue;
+            const px = x * CELL, py = y * CELL;
+            ctx.fillStyle = "#57534e";
+            ctx.fillRect(px, py, CELL, CELL);
+            ctx.fillStyle = "#78716c";
+            ctx.fillRect(px + 3, py + 3, CELL - 6, CELL - 10);
+          }
+        for (const b of bullets) {
+          ctx.fillStyle = b.owner === 1 ? "#14532d" : "#7c2d12";
+          ctx.beginPath(); ctx.arc(b.x, b.y, 4.5, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "rgba(255,255,255,0.6)";
+          ctx.beginPath(); ctx.arc(b.x - 1, b.y - 1, 1.5, 0, Math.PI * 2); ctx.fill();
+        }
+        tanks.forEach((t) => t.alive && drawTank(t));
+        for (const q of parts) {
+          ctx.fillStyle = `rgba(${q.c},${Math.max(0, q.life / q.max)})`;
+          ctx.beginPath(); ctx.arc(q.x, q.y, q.r, 0, Math.PI * 2); ctx.fill();
+        }
+
+        if (state === "count") text(roundT > 0.5 ? "Ready..." : "GO!", W / 2, H / 2, 46, "#fff");
+        if (msg && state === "between") text(msg, W / 2, H / 2, 36, "#fde68a");
+        if (state === "over") {
+          ctx.fillStyle = "rgba(15,16,32,0.65)";
+          ctx.fillRect(0, 0, W, H);
+          const w = wins[1] > wins[2] ? 1 : 2;
+          const title = mode === "cpu" ? (w === 1 ? "🏆 Aap jeet gaye!" : "😢 Computer jeeta") : `🏆 ${name(w)} jeeta!`;
+          text(title, W / 2, H / 2 - 30, 44, "#fff");
+          text(`${wins[1]} – ${wins[2]}`, W / 2, H / 2 + 20, 30, "#fde68a");
+          text(IS_TOUCH ? "Tap = naya match" : "Click / Space = naya match", W / 2, H / 2 + 64, 20, "#cbd5e1");
+        }
+      }
+
+      // ---------- Input ----------
+      const held = {};
+      const padState = { 1: {}, 2: {} };
+      function applyInput() {
+        if (!tanks) return;
+        const k = (...codes) => (codes.some((c) => held[c]) ? 1 : 0);
+        const p1 = tanks[0].input;
+        if (mode === "cpu") {
+          Object.assign(p1, {
+            fwd: k("KeyW", "ArrowUp"), back: k("KeyS", "ArrowDown"),
+            left: k("KeyA", "ArrowLeft"), right: k("KeyD", "ArrowRight"), fire: k("Space", "KeyF", "Enter"),
+          });
+        } else {
+          Object.assign(p1, { fwd: k("KeyW"), back: k("KeyS"), left: k("KeyA"), right: k("KeyD"), fire: k("Space", "KeyF") });
+          Object.assign(tanks[1].input, {
+            fwd: k("ArrowUp"), back: k("ArrowDown"), left: k("ArrowLeft"), right: k("ArrowRight"), fire: k("Enter", "Slash", "Numpad0"),
+          });
+        }
+        for (const id of [1, 2]) {
+          if (id === 2 && mode === "cpu") continue;
+          for (const [key, on] of Object.entries(padState[id])) if (on) tanks[id - 1].input[key] = 1;
+        }
+      }
+      window.addEventListener("keydown", (e) => {
+        if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.code)) e.preventDefault();
+        if (state === "over" && (e.code === "Space" || e.code === "Enter") && !e.repeat) return resetMatch();
+        held[e.code] = true;
+        applyInput();
+      });
+      window.addEventListener("keyup", (e) => { held[e.code] = false; applyInput(); });
+      canvas.addEventListener("pointerdown", () => { sound.unlock(); if (state === "over") resetMatch(); });
+
+      function buildPad(el, id) {
+        el.innerHTML = `
+          <div class="dir">
+            <button class="rl" data-k="left">⟲</button>
+            <button class="fwd" data-k="fwd">▲</button>
+            <button class="rr" data-k="right">⟳</button>
+            <button class="back" data-k="back">▼</button>
+          </div>
+          <button class="fire" data-k="fire">FIRE</button>`;
+        el.querySelectorAll("button").forEach((b) => {
+          const k = b.dataset.k;
+          const on = (e) => { e.preventDefault(); sound.unlock(); b.setPointerCapture?.(e.pointerId); padState[id][k] = true; b.classList.add("on"); applyInput(); if (state === "over") resetMatch(); };
+          const off = () => { padState[id][k] = false; b.classList.remove("on"); applyInput(); };
+          b.addEventListener("pointerdown", on);
+          b.addEventListener("pointerup", off);
+          b.addEventListener("pointercancel", off);
+          b.addEventListener("lostpointercapture", off);
+        });
+      }
+      buildPad(document.getElementById("pad1"), 1);
+      buildPad(document.getElementById("pad2"), 2);
+
+      function setMode(m) {
+        mode = m;
+        store.set("tank_mode", m);
+        document.querySelectorAll("#modeRow .btn").forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
+        document.getElementById("pad1").classList.add("show");
+        document.getElementById("pad2").classList.toggle("show", m === "2p");
+        document.getElementById("hint").textContent = IS_TOUCH
+          ? (m === "2p" ? "Har player apne buttons se · Phone ko beech mein rakh ke aamne-saamne khelo" : "⟲ ⟳ ghumao, ▲ ▼ chalao, FIRE · Goliyaan deewar se takra ke lautti hain!")
+          : (m === "2p" ? "Green: W A S D + Space  ·  Orange: Arrow keys + Enter  ·  Pehle 5 jeeto" : "W A S D / Arrow keys + Space = fire · Goliyaan deewar se lautti hain!");
+        document.activeElement && document.activeElement.blur();
+        resetMatch();
+        resize();
+      }
+      document.querySelectorAll("#modeRow .btn").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+
+      let last = performance.now();
+      function loop(now) {
+        const dt = Math.min((now - last) / 1000, 1 / 30);
+        last = now;
+        update(dt);
+        draw();
+        requestAnimationFrame(loop);
+      }
+      document.addEventListener("visibilitychange", () => { last = performance.now(); });
+      const resize = () => fitCanvas(canvas, ctx, wrap, W, H);
+      window.addEventListener("resize", resize);
+      setMode(mode);
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>

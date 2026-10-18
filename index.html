@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" href="icons/favicon.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="js/pwa.js" defer></script>
+  <meta name="description" content="Game Zone by Shubham Goyal – free games jo mobile aur laptop dono par chalte hain.">
+  <title>Game Zone by Shubham Goyal</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <a href="index.html" class="logo">🎮 Game <span>Zone</span></a>
+    <span class="byline">by Shubham Goyal</span>
+  </header>
+
+  <main>
+    <section class="hero">
+      <h1>Game <span class="hl">Zone</span></h1>
+      <p class="hero-by">by Shubham Goyal</p>
+      <p>Free games, bina internet ke bhi. Mobile ya laptop, kahin bhi khelo!</p>
+      <div class="get-app" id="getApp">
+        <a class="app-btn apk" id="apkBtn" href="download/GameZone.apk" download hidden>⬇️ Android APK Download</a>
+        <button class="app-btn install" id="installBtn" hidden>📲 App Install karo</button>
+      </div>
+      <p class="app-note" id="appNote"></p>
+    </section>
+
+    <section class="games">
+      <div class="games-head">
+        <div class="filters">
+          <button class="filter" data-filter="all">🎮 Saare</button>
+          <button class="filter" data-filter="2p">👥 2 Player</button>
+          <button class="filter" data-filter="action">🏃 Action</button>
+          <button class="filter" data-filter="puzzle">🧠 Puzzle</button>
+          <button class="filter" data-filter="classic">🎲 Classic</button>
+        </div>
+        <div class="search-wrap">
+          <input type="search" id="search" placeholder="🔍 Game dhoondho..." autocomplete="off">
+          <span class="count" id="game-count"></span>
+        </div>
+      </div>
+      <div class="grid" id="game-grid"></div>
+    </section>
+  </main>
+
+  <footer class="site-footer">© 2026 Game Zone by Shubham Goyal</footer>
+
+  <script src="js/games.js"></script>
+  <script>
+    // App install / APK download buttons
+    (() => {
+      const inApp = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone || window.Capacitor;
+      if (inApp) return; // app ke andar ho toh buttons ki zaroorat nahi
+      const apk = document.getElementById("apkBtn");
+      const install = document.getElementById("installBtn");
+      const note = document.getElementById("appNote");
+      const isAndroid = /android/i.test(navigator.userAgent);
+      const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+
+      // APK file website par hai tabhi button dikhao
+      if (location.protocol !== "file:") {
+        fetch(apk.getAttribute("href"), { method: "HEAD" })
+          .then((r) => { if (r.ok) { apk.hidden = false; if (isAndroid) note.textContent = "APK download karke kholo. 'Unknown apps' ki permission maange toh Allow karo."; } })
+          .catch(() => {});
+      }
+
+      let prompt = null;
+      window.addEventListener("beforeinstallprompt", (e) => {
+        e.preventDefault();
+        prompt = e;
+        install.hidden = false;
+      });
+      install.addEventListener("click", async () => {
+        if (!prompt) return;
+        prompt.prompt();
+        await prompt.userChoice;
+        prompt = null;
+        install.hidden = true;
+      });
+      window.addEventListener("appinstalled", () => {
+        install.hidden = true;
+        note.textContent = "✅ App install ho gaya! Ab home screen se bina net ke khelo.";
+      });
+      if (isIOS) note.textContent = "iPhone par: Share ⬆️ dabao → 'Add to Home Screen'. Phir bina net ke chalega.";
+    })();
+  </script>
+</body>
+</html>

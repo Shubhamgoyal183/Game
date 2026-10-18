@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Platform Jumper – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+</head>
+<body class="fullscreen">
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🦘 Platform Jumper</h1>
+    <span class="spacer"></span>
+  </header>
+  <main class="stage">
+    <div class="canvas-wrap" id="wrap"><canvas id="game"></canvas></div>
+    <div class="hint" id="hint">← → / A D se chalao · Platforms par uchhal ke upar jaao!</div>
+  </main>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const W = 360, H = 640;
+      const GRAVITY = 1700, JUMP = -880, SPRING = -1450, MOVE = 330;
+      const PW = 64, PH = 14;
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const wrap = document.getElementById("wrap");
+      if (IS_TOUCH) document.getElementById("hint").textContent = "Screen ka left / right hissa dabaake chalao";
+
+      let me, plats, height, state, best, nextY, input = { left: false, right: false }, particles, stars;
+      best = store.get("jumper_best", 0);
+
+      // ---------- Platforms ----------
+      function makePlat(y) {
+        const h = height / 10;
+        const r = Math.random();
+        let type = "normal";
+        if (h > 150 && r < Math.min(0.3, h / 4000)) type = "moving";
+        else if (h > 300 && r < 0.12 + Math.min(0.15, h / 8000)) type = "break";
+        const p = {
+          x: Math.random() * (W - PW), y, type,
+          vx: type === "moving" ? (60 + Math.random() * 60) * (Math.random() < 0.5 ? -1 : 1) : 0,
+          spring: type === "normal" && Math.random() < 0.08,
+          broken: false, fall: 0,
+        };
+        if (type !== "break" && Math.random() < 0.15) stars.push({ x: p.x + PW / 2, y: y - 30, got: false });
+        return p;
+      }
+
+      function fill() {
+        // Platforms ke beech ki doori unchaai ke saath badhti hai (lekin hamesha kood ke pahunch sako itni)
+        while (nextY > -40) {
+          const gap = 55 + Math.min(80, height / 120) + Math.random() * 30;
+          nextY -= gap;
+          plats.push(makePlat(nextY));
+          // Tootne wala platform aaye toh paas mein ek pakka platform bhi do
+          if (plats[plats.length - 1].type === "break") {
+            nextY -= 40;
+            plats.push({ ...makePlat(nextY), type: "normal", vx: 0, spring: false });
+          }
+        }
+      }
+
+      function reset() {
+        me = { x: W / 2 - 20, y: H - 160, vx: 0, vy: JUMP, face: 1, squash: 0 };
+        plats = [{ x: W / 2 - PW / 2, y: H - 80, type: "normal", vx: 0, spring: false, broken: false, fall: 0 }];
+        stars = [];
+        particles = [];
+        height = 0;
+        nextY = H - 80;
+        state = "ready";
+        fill();
+      }
+
+      const score = () => Math.floor(height / 10);
+
+      let starCount = 0;
+      function update(dt) {
+        for (const q of particles) { q.x += q.vx * dt; q.y += q.vy * dt; q.vy += 600 * dt; q.life -= dt; }
+        particles = particles.filter((q) => q.life > 0);
+        if (state !== "play") return;
+
+        // Left / right
+        const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+        me.vx += (dir * MOVE - me.vx) * Math.min(1, dt * 10);
+        if (dir) me.face = dir;
+        me.x += me.vx * dt;
+        if (me.x > W) me.x -= W + 40;        // ek taraf se nikle, doosri taraf se aaye
+        if (me.x < -40) me.x += W + 40;
+
+        const prevBottom = me.y + 40;
+        me.vy += GRAVITY * dt;
+        me.y += me.vy * dt;
+        me.squash = Math.max(0, me.squash - dt * 4);
+
+        for (const p of plats) {
+          if (p.type === "moving") {
+            p.x += p.vx * dt;
+            if (p.x < 0 || p.x > W - PW) p.vx *= -1;
+          }
+          if (p.broken) { p.fall += dt; p.y += 400 * dt; continue; }
+          // Sirf girte waqt upar se platform par lando
+          const bottom = me.y + 40;
+          if (me.vy > 0 && prevBottom <= p.y + 2 && bottom >= p.y && me.x + 32 > p.x && me.x + 8 < p.x + PW) {
+            if (p.type === "break") {
+              p.broken = true;
+              sound.beep(180, 0.15, "sawtooth", 0.05);
+              continue;
+            }
+            const onSpring = p.spring && me.x + 20 > p.x + PW / 2 - 14 && me.x + 20 < p.x + PW / 2 + 14;
+            me.vy = onSpring ? SPRING : JUMP;
+            me.y = p.y - 40;
+            me.squash = 1;
+            sound.beep(onSpring ? 300 : 420, onSpring ? 0.25 : 0.08, "triangle", 0.06, onSpring ? 1200 : 700);
+            for (let i = 0; i < 5; i++) particles.push({ x: me.x + 20, y: p.y, vx: (Math.random() - 0.5) * 120, vy: -Math.random() * 80, life: 0.4, c: "#bbf7d0" });
+          }
+        }
+
+        for (const s of stars) {
+          if (!s.got && Math.abs(s.x - (me.x + 20)) < 24 && Math.abs(s.y - (me.y + 20)) < 28) {
+            s.got = true;
+            starCount++;
+            height += 300; // star = +30 bonus
+            sound.beep(990, 0.1, "sine", 0.07, 1500);
+          }
+        }
+
+        // Camera: player screen ke 40% se upar gaya toh duniya neeche khiskao
+        if (me.y < H * 0.4) {
+          const d = H * 0.4 - me.y;
+          me.y += d;
+          height += d;
+          nextY += d;
+          plats.forEach((p) => (p.y += d));
+          stars.forEach((s) => (s.y += d));
+          particles.forEach((q) => (q.y += d));
+        }
+        plats = plats.filter((p) => p.y < H + 40);
+        stars = stars.filter((s) => s.y < H + 40);
+        fill();
+
+        if (me.y > H + 20) {
+          state = "over";
+          sound.beep(400, 0.5, "triangle", 0.07, 80);
+          const s = score();
+          if (s > best) { best = s; store.set("jumper_best", best); state = "record"; }
+        }
+      }
+
+      // ---------- Draw ----------
+      function rr(x, y, w, h, r) {
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r);
+        ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r);
+        ctx.arcTo(x, y, x + w, y, r);
+        ctx.closePath();
+      }
+
+      function drawBg() {
+        // Unchaai ke saath aasmaan ka rang badalta hai: din → shaam → raat → space
+        const t = Math.min(1, height / 60000);
+        const g = ctx.createLinearGradient(0, 0, 0, H);
+        const top = `hsl(${210 + t * 50}, ${70 - t * 30}%, ${70 - t * 60}%)`;
+        const bot = `hsl(${200 + t * 60}, 70%, ${88 - t * 70}%)`;
+        g.addColorStop(0, top);
+        g.addColorStop(1, bot);
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, W, H);
+        // grid lines (notebook jaisa)
+        ctx.strokeStyle = `rgba(255,255,255,${0.15 - t * 0.1})`;
+        ctx.lineWidth = 1;
+        const off = height % 30;
+        for (let y = off; y < H; y += 30) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+        for (let x = 0; x < W; x += 30) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+        if (t > 0.3) {
+          ctx.fillStyle = `rgba(255,255,255,${(t - 0.3) * 1.2})`;
+          for (let i = 0; i < 40; i++) {
+            const sx = (i * 89) % W, sy = ((i * 157 + height * 0.05) % H);
+            ctx.fillRect(sx, sy, 2, 2);
+          }
+        }
+      }
+
+      function drawPlat(p) {
+        const colors = { normal: ["#22c55e", "#15803d"], moving: ["#38bdf8", "#0369a1"], break: ["#b45309", "#78350f"] };
+        const [c1, c2] = colors[p.type];
+        ctx.save();
+        if (p.broken) {
+          ctx.globalAlpha = Math.max(0, 1 - p.fall * 2);
+          ctx.fillStyle = c1;
+          rr(p.x, p.y, PW / 2 - 2, PH, 5); ctx.fill();
+          rr(p.x + PW / 2 + 2, p.y + p.fall * 30, PW / 2 - 2, PH, 5); ctx.fill();
+          ctx.restore();
+          return;
+        }
+        ctx.fillStyle = c2;
+        rr(p.x, p.y + 3, PW, PH, 6); ctx.fill();
+        ctx.fillStyle = c1;
+        rr(p.x, p.y, PW, PH - 2, 6); ctx.fill();
+        if (p.type === "break") {
+          ctx.strokeStyle = c2;
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(p.x + PW / 2 - 4, p.y); ctx.lineTo(p.x + PW / 2 + 3, p.y + 6); ctx.lineTo(p.x + PW / 2 - 2, p.y + PH); ctx.stroke();
+        }
+        if (p.spring) {
+          ctx.strokeStyle = "#94a3b8";
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          const cx = p.x + PW / 2;
+          ctx.moveTo(cx - 8, p.y);
+          for (let i = 1; i <= 4; i++) ctx.lineTo(cx + (i % 2 ? 8 : -8), p.y - i * 4);
+          ctx.stroke();
+          ctx.fillStyle = "#ef4444";
+          ctx.fillRect(cx - 10, p.y - 19, 20, 4);
+        }
+        ctx.restore();
+      }
+
+      function drawStar(x, y) {
+        ctx.fillStyle = "#facc15";
+        ctx.beginPath();
+        for (let i = 0; i < 10; i++) {
+          const a = (i * Math.PI) / 5 - Math.PI / 2 + performance.now() / 800;
+          const r = i % 2 ? 6 : 13;
+          ctx.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
+        }
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      function drawMe() {
+        const sq = me.squash;
+        const w = 40 * (1 + sq * 0.2), h = 40 * (1 - sq * 0.2);
+        const x = me.x + 20, y = me.y + 40;
+        for (const ox of [0, me.x < 0 ? W + 40 : me.x > W - 40 ? -(W + 40) : null]) {
+          if (ox === null) continue;
+          ctx.save();
+          ctx.translate(x + ox, y);
+          ctx.scale(me.face, 1);
+          // legs
+          ctx.fillStyle = "#15803d";
+          ctx.fillRect(-12, -6, 6, 8 - sq * 4);
+          ctx.fillRect(6, -6, 6, 8 - sq * 4);
+          // body
+          ctx.fillStyle = "#a3e635";
+          rr(-w / 2, -h, w, h - 4, 14); ctx.fill();
+          ctx.fillStyle = "#65a30d";
+          for (let i = 0; i < 3; i++) ctx.fillRect(-w / 2 + 6, -h + 16 + i * 7, w - 12, 2);
+          // snout
+          ctx.fillStyle = "#a3e635";
+          rr(w / 2 - 6, -h + 8, 14, 12, 5); ctx.fill();
+          // eyes
+          ctx.fillStyle = "#fff";
+          ctx.beginPath(); ctx.arc(2, -h + 10, 7, 0, Math.PI * 2); ctx.arc(12, -h + 9, 6, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#111";
+          ctx.beginPath(); ctx.arc(4, -h + 10, 3, 0, Math.PI * 2); ctx.arc(14, -h + 9, 2.6, 0, Math.PI * 2); ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      function centerText(t, y, size, color) {
+        ctx.font = `800 ${size}px "Segoe UI", sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.lineJoin = "round";
+        ctx.lineWidth = size / 4;
+        ctx.strokeStyle = "rgba(0,0,0,0.6)";
+        ctx.strokeText(t, W / 2, y);
+        ctx.fillStyle = color;
+        ctx.fillText(t, W / 2, y);
+      }
+
+      function draw() {
+        drawBg();
+        plats.forEach(drawPlat);
+        stars.forEach((s) => !s.got && drawStar(s.x, s.y));
+        for (const q of particles) {
+          ctx.fillStyle = q.c;
+          ctx.globalAlpha = q.life / 0.4;
+          ctx.fillRect(q.x, q.y, 4, 4);
+          ctx.globalAlpha = 1;
+        }
+        drawMe();
+
+        ctx.fillStyle = "rgba(0,0,0,0.35)";
+        rr(10, 10, W - 20, 38, 10); ctx.fill();
+        ctx.font = '800 20px "Segoe UI", sans-serif';
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "#fff";
+        ctx.fillText(`${score()} m`, 22, 30);
+        ctx.textAlign = "right";
+        ctx.font = '700 14px "Segoe UI", sans-serif';
+        ctx.fillStyle = "#ffcc33";
+        ctx.fillText(`⭐ ${starCount}   Best: ${best}`, W - 22, 30);
+
+        if (state === "ready") {
+          centerText("Platform Jumper", H * 0.3, 32, "#fff");
+          centerText(IS_TOUCH ? "Tap karke shuru karo" : "Space / ← → dabake shuru karo", H * 0.38, 17, "#ffcc33");
+          centerText("🟢 Normal  🔵 Chalta  🟤 Toot-ta  🔴 Spring", H * 0.45, 13, "#fff");
+        }
+        if (state === "over" || state === "record") {
+          ctx.fillStyle = "rgba(15,16,32,0.6)";
+          ctx.fillRect(0, 0, W, H);
+          centerText(state === "record" ? "🏆 Naya Record!" : "😵 Gir gaye!", H * 0.38, 32, "#fff");
+          centerText(`${score()} m · Best: ${best} m`, H * 0.46, 20, "#ffcc33");
+          centerText(IS_TOUCH ? "Tap = dobara" : "Space = dobara", H * 0.54, 16, "#cbd5e1");
+        }
+      }
+
+      // ---------- Input ----------
+      function start() {
+        sound.unlock();
+        if (state === "ready") state = "play";
+        else if (state === "over" || state === "record") { starCount = 0; reset(); state = "play"; }
+      }
+      window.addEventListener("keydown", (e) => {
+        if (["ArrowLeft", "KeyA"].includes(e.code)) { input.left = true; if (state === "ready") start(); }
+        if (["ArrowRight", "KeyD"].includes(e.code)) { input.right = true; if (state === "ready") start(); }
+        if (e.code === "Space" || e.code === "Enter") { e.preventDefault(); if (!e.repeat) start(); }
+      });
+      window.addEventListener("keyup", (e) => {
+        if (["ArrowLeft", "KeyA"].includes(e.code)) input.left = false;
+        if (["ArrowRight", "KeyD"].includes(e.code)) input.right = false;
+      });
+      const touches = new Map();
+      function applyTouches() {
+        input.left = input.right = false;
+        for (const side of touches.values()) input[side] = true;
+      }
+      canvas.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        if (state !== "play") { start(); return; }
+        canvas.setPointerCapture(e.pointerId);
+        touches.set(e.pointerId, canvasPoint(canvas, e, W, H).x < W / 2 ? "left" : "right");
+        applyTouches();
+      });
+      canvas.addEventListener("pointermove", (e) => {
+        if (!touches.has(e.pointerId)) return;
+        touches.set(e.pointerId, canvasPoint(canvas, e, W, H).x < W / 2 ? "left" : "right");
+        applyTouches();
+      });
+      const lift = (e) => { touches.delete(e.pointerId); applyTouches(); };
+      canvas.addEventListener("pointerup", lift);
+      canvas.addEventListener("pointercancel", lift);
+
+      let last = performance.now();
+      function loop(now) {
+        const dt = Math.min((now - last) / 1000, 1 / 30);
+        last = now;
+        update(dt);
+        draw();
+        requestAnimationFrame(loop);
+      }
+      document.addEventListener("visibilitychange", () => { last = performance.now(); });
+      const resize = () => fitCanvas(canvas, ctx, wrap, W, H);
+      window.addEventListener("resize", resize);
+      resize();
+      reset();
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>

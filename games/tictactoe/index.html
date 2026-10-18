@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Tic Tac Toe – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+  <style>
+    .board {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      width: min(88vw, 360px);
+      aspect-ratio: 1;
+    }
+    .cell {
+      background: var(--card);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 14px;
+      font-size: clamp(2.6rem, 14vw, 4rem);
+      font-weight: 800;
+      color: var(--text);
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      transition: background 0.15s;
+      touch-action: manipulation;
+    }
+    .cell:hover:not(:disabled) { background: var(--card-2); }
+    .cell:disabled { cursor: default; }
+    .cell.x { color: var(--accent-2); }
+    .cell.o { color: var(--accent); }
+    .cell.win { background: #2f6b45; animation: pop 0.4s ease; }
+    .cell span { animation: pop 0.2s ease; }
+    @keyframes pop { from { transform: scale(0.6); } to { transform: scale(1); } }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>❌ Tic Tac Toe ⭕</h1>
+    <span class="spacer"></span>
+  </header>
+
+  <main class="stage">
+    <div class="row" id="modeRow">
+      <button class="btn small" data-mode="easy">🤖 Easy</button>
+      <button class="btn small" data-mode="hard">🤖 Hard</button>
+      <button class="btn small" data-mode="2p">👥 2 Players</button>
+    </div>
+
+    <div class="panel scores">
+      <div><div class="label" id="xLabel">You (X)</div><div class="value" id="xScore">0</div></div>
+      <div><div class="label">Draw</div><div class="value" id="dScore">0</div></div>
+      <div><div class="label" id="oLabel">CPU (O)</div><div class="value" id="oScore">0</div></div>
+    </div>
+
+    <div class="status" id="status"></div>
+    <div class="board" id="board"></div>
+
+    <div class="row">
+      <button class="btn primary" id="newBtn">🔄 New Round</button>
+      <button class="btn" id="resetBtn">Reset Score</button>
+    </div>
+  </main>
+
+  <p class="credit">Game Zone by Shubham Goyal</p>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const LINES = [
+        [0, 1, 2], [3, 4, 5], [6, 7, 8],
+        [0, 3, 6], [1, 4, 7], [2, 5, 8],
+        [0, 4, 8], [2, 4, 6],
+      ];
+      const boardEl = document.getElementById("board");
+      const statusEl = document.getElementById("status");
+      const cells = [];
+
+      let mode = store.get("ttt_mode", "hard");
+      let board, turn, over, starter = "X", round = 0;
+      let scores = { X: 0, O: 0, D: 0 };
+
+      for (let i = 0; i < 9; i++) {
+        const c = document.createElement("button");
+        c.className = "cell";
+        c.setAttribute("aria-label", `Cell ${i + 1}`);
+        c.addEventListener("click", () => humanMove(i));
+        boardEl.appendChild(c);
+        cells.push(c);
+      }
+
+      function winnerOf(b) {
+        for (const line of LINES) {
+          const [a, c, d] = line;
+          if (b[a] && b[a] === b[c] && b[a] === b[d]) return { who: b[a], line };
+        }
+        return b.every(Boolean) ? { who: "D" } : null;
+      }
+
+      // Minimax: Hard mode mein computer kabhi nahi haarta
+      function minimax(b, player, depth) {
+        const r = winnerOf(b);
+        if (r) return r.who === "O" ? 10 - depth : r.who === "X" ? depth - 10 : 0;
+        let best = player === "O" ? -Infinity : Infinity;
+        for (let i = 0; i < 9; i++) {
+          if (b[i]) continue;
+          b[i] = player;
+          const s = minimax(b, player === "O" ? "X" : "O", depth + 1);
+          b[i] = null;
+          best = player === "O" ? Math.max(best, s) : Math.min(best, s);
+        }
+        return best;
+      }
+
+      function cpuPick() {
+        const empty = board.map((v, i) => (v ? null : i)).filter((v) => v !== null);
+        if (mode === "easy" && Math.random() < 0.6) {
+          return empty[Math.floor(Math.random() * empty.length)];
+        }
+        let bestScore = -Infinity, moves = [];
+        for (const i of empty) {
+          board[i] = "O";
+          const s = minimax(board, "X", 1);
+          board[i] = null;
+          if (s > bestScore) { bestScore = s; moves = [i]; }
+          else if (s === bestScore) moves.push(i);
+        }
+        return moves[Math.floor(Math.random() * moves.length)];
+      }
+
+      function place(i) {
+        board[i] = turn;
+        cells[i].innerHTML = `<span>${turn}</span>`;
+        cells[i].classList.add(turn.toLowerCase());
+        cells[i].disabled = true;
+
+        const r = winnerOf(board);
+        if (r) return finish(r);
+        turn = turn === "X" ? "O" : "X";
+        updateStatus();
+      }
+
+      function humanMove(i) {
+        if (over || board[i]) return;
+        if (mode !== "2p" && turn === "O") return;
+        place(i);
+        if (!over && mode !== "2p" && turn === "O") cpuTurn();
+      }
+
+      function cpuTurn() {
+        cells.forEach((c, i) => { if (!board[i]) c.disabled = true; });
+        const myRound = round;
+        setTimeout(() => {
+          if (over || myRound !== round) return; // beech mein New Round dab gaya
+          place(cpuPick());
+          if (!over) cells.forEach((c, i) => { if (!board[i]) c.disabled = false; });
+        }, 380);
+      }
+
+      function finish(r) {
+        over = true;
+        cells.forEach((c) => (c.disabled = true));
+        scores[r.who]++;
+        renderScores();
+        if (r.who === "D") {
+          statusEl.innerHTML = `<span class="muted">🤝 Draw ho gaya!</span>`;
+        } else {
+          r.line.forEach((i) => cells[i].classList.add("win"));
+          const name = names()[r.who];
+          const cls = mode !== "2p" && r.who === "O" ? "bad" : "good";
+          statusEl.innerHTML = `<span class="${cls}">🎉 ${name} jeet gaya!</span>`;
+        }
+      }
+
+      function names() {
+        return mode === "2p" ? { X: "Player X", O: "Player O" } : { X: "Aap", O: "Computer" };
+      }
+
+      function updateStatus() {
+        if (mode === "2p") statusEl.textContent = `Player ${turn} ki baari`;
+        else statusEl.textContent = turn === "X" ? "Aapki baari (X)" : "Computer soch raha hai...";
+      }
+
+      function renderScores() {
+        document.getElementById("xScore").textContent = scores.X;
+        document.getElementById("oScore").textContent = scores.O;
+        document.getElementById("dScore").textContent = scores.D;
+        document.getElementById("xLabel").textContent = mode === "2p" ? "Player X" : "You (X)";
+        document.getElementById("oLabel").textContent = mode === "2p" ? "Player O" : "CPU (O)";
+      }
+
+      function newRound() {
+        board = Array(9).fill(null);
+        over = false;
+        round++;
+        turn = starter;
+        starter = starter === "X" ? "O" : "X"; // har round mein baari badalti hai
+        cells.forEach((c) => {
+          c.textContent = "";
+          c.className = "cell";
+          c.disabled = false;
+        });
+        updateStatus();
+        if (mode !== "2p" && turn === "O") cpuTurn();
+      }
+
+      function setMode(m) {
+        mode = m;
+        store.set("ttt_mode", m);
+        document.querySelectorAll("#modeRow .btn").forEach((b) =>
+          b.classList.toggle("active", b.dataset.mode === m));
+        scores = { X: 0, O: 0, D: 0 };
+        starter = "X";
+        renderScores();
+        newRound();
+      }
+
+      document.querySelectorAll("#modeRow .btn").forEach((b) =>
+        b.addEventListener("click", () => setMode(b.dataset.mode)));
+      document.getElementById("newBtn").addEventListener("click", newRound);
+      document.getElementById("resetBtn").addEventListener("click", () => {
+        scores = { X: 0, O: 0, D: 0 };
+        renderScores();
+      });
+
+      setMode(mode);
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Reaction Duel – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+  <style>
+    body { user-select: none; -webkit-user-select: none; }
+    .zone {
+      width: min(92vw, 460px);
+      aspect-ratio: 1;
+      border-radius: 20px;
+      border: none;
+      color: #fff;
+      font: inherit;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 20px;
+      text-align: center;
+      touch-action: none;
+      transition: background 0.05s;
+    }
+    .zone .big { font-size: clamp(2rem, 10vw, 3rem); font-weight: 800; }
+    .zone .small { font-size: 1rem; opacity: 0.85; }
+    .idle { background: #2b4fd8; }
+    .wait { background: #b91c1c; }
+    .go { background: #16a34a; }
+    .foul { background: #c2410c; }
+    .tries { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+    .tries span { background: var(--card); padding: 4px 10px; border-radius: 999px; font-weight: 700; font-size: 0.9rem; }
+
+    /* ---------- 2 Player full-screen ---------- */
+    #duel {
+      position: fixed;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      z-index: 40;
+      background: #0f1020;
+    }
+    #duel.show { display: flex; }
+    .half {
+      flex: 1;
+      border: none;
+      color: #fff;
+      font: inherit;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      text-align: center;
+      touch-action: none;
+      cursor: pointer;
+      transition: background 0.05s;
+    }
+    .half .name { font-weight: 700; opacity: 0.85; }
+    .half .score { font-size: clamp(2.4rem, 12vw, 4rem); font-weight: 800; }
+    .half .msg { font-size: clamp(1.2rem, 6vw, 1.8rem); font-weight: 800; min-height: 1.4em; }
+    .half .key { font-size: 0.85rem; opacity: 0.7; }
+    .half.p1h { border-top: 3px solid var(--accent-2); }
+    .half.p2h { border-bottom: 3px solid var(--accent); }
+    /* Phone par upar wala hissa ulta, taaki saamne baitha player padh sake */
+    @media (orientation: portrait) { .half.p2h > * { transform: rotate(180deg); } }
+    /* Laptop / landscape: baayein-daayein */
+    @media (orientation: landscape) {
+      #duel { flex-direction: row; } /* Player 2 (A key) baayein, Player 1 (L key) daayein */
+      .half.p1h { border-top: none; border-left: 3px solid var(--accent-2); }
+      .half.p2h { border-bottom: none; border-right: 3px solid var(--accent); }
+    }
+    .duel-exit {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 2;
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>⚡ Reaction Duel</h1>
+    <span class="spacer"></span>
+  </header>
+
+  <main class="stage">
+    <div class="row">
+      <button class="btn small active" id="soloBtn">👤 Solo test</button>
+      <button class="btn small" id="duelBtn">👥 2 Players duel</button>
+    </div>
+
+    <div class="panel scores">
+      <div><div class="label">Average</div><div class="value" id="avg">–</div></div>
+      <div><div class="label">Best</div><div class="value" id="best">–</div></div>
+    </div>
+
+    <button class="zone idle" id="zone">
+      <span class="big">⚡ Start</span>
+      <span class="small">Screen hari (green) ho toh jitna jaldi ho sake tap karo</span>
+    </button>
+    <div class="tries" id="tries"></div>
+    <div class="muted" style="font-size:.85rem;text-align:center" id="soloHint">Laptop par Space bhi daba sakte ho · 5 try ka average</div>
+  </main>
+
+  <div id="duel">
+    <button class="half p2h" id="h2">
+      <span class="name">Player 2</span>
+      <span class="score" id="s2">0</span>
+      <span class="msg" id="m2"></span>
+      <span class="key" id="k2"></span>
+    </button>
+    <button class="half p1h" id="h1">
+      <span class="name">Player 1</span>
+      <span class="score" id="s1">0</span>
+      <span class="msg" id="m1"></span>
+      <span class="key" id="k1"></span>
+    </button>
+    <button class="btn small duel-exit" id="exitBtn">✕ Band karo</button>
+  </div>
+
+  <p class="credit">Game Zone by Shubham Goyal</p>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const $ = (id) => document.getElementById(id);
+      const isTouch = !window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+      if (isTouch) $("soloHint").textContent = "5 try ka average";
+
+      const randDelay = () => 1500 + Math.random() * 2500;
+
+      // ================= SOLO =================
+      const zone = $("zone");
+      const TRIES = 5;
+      let sState = "idle", sTimer, goAt, times = [];
+      let best = store.get("reaction_best", null);
+      $("best").textContent = best ? best + " ms" : "–";
+
+      function setZone(cls, big, small) {
+        zone.className = "zone " + cls;
+        zone.innerHTML = `<span class="big">${big}</span><span class="small">${small}</span>`;
+      }
+
+      function renderTries() {
+        $("tries").innerHTML = times.map((t, i) => `<span>#${i + 1}: ${t} ms</span>`).join("");
+        $("avg").textContent = times.length ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) + " ms" : "–";
+      }
+
+      function soloArm() {
+        sState = "wait";
+        setZone("wait", "Ruko...", "Green hone ka intezaar karo");
+        sTimer = setTimeout(() => {
+          sState = "go";
+          goAt = performance.now();
+          setZone("go", "TAP!", "Abhi!");
+        }, randDelay());
+      }
+
+      function soloTap() {
+        if (sState === "idle" || sState === "result") {
+          if (times.length >= TRIES) { times = []; renderTries(); }
+          soloArm();
+        } else if (sState === "wait") {
+          clearTimeout(sTimer);
+          sState = "result";
+          setZone("foul", "Bahut jaldi! 😅", "Green ka intezaar karna tha. Dobara tap karo");
+        } else if (sState === "go") {
+          const ms = Math.round(performance.now() - goAt);
+          times.push(ms);
+          renderTries();
+          sState = "result";
+          if (!best || ms < best) { best = ms; store.set("reaction_best", best); $("best").textContent = best + " ms"; }
+          if (times.length >= TRIES) {
+            const avg = Math.round(times.reduce((a, b) => a + b, 0) / times.length);
+            const rating = avg < 220 ? "🚀 Bijli jaisa tez!" : avg < 280 ? "⚡ Bahut badhiya!" : avg < 350 ? "👍 Accha hai" : "🐢 Practice karo";
+            setZone("idle", `${avg} ms`, `${rating}<br>Tap karke dobara shuru karo`);
+          } else {
+            setZone("idle", `${ms} ms`, `Try ${times.length}/${TRIES} · Agle ke liye tap karo`);
+          }
+        }
+      }
+
+      zone.addEventListener("pointerdown", (e) => { e.preventDefault(); soloTap(); });
+
+      // ================= 2 PLAYER DUEL =================
+      const WIN = 5;
+      const duel = $("duel");
+      const halves = { 1: $("h1"), 2: $("h2") };
+      let dState = "off", dTimer, pts;
+
+      $("k1").textContent = isTouch ? "" : "Key: L";
+      $("k2").textContent = isTouch ? "" : "Key: A";
+
+      function paint(cls, m1, m2) {
+        halves[1].className = "half p1h " + cls;
+        halves[2].className = "half p2h " + cls;
+        $("m1").textContent = m1;
+        $("m2").textContent = m2 ?? m1;
+        $("s1").textContent = pts[1];
+        $("s2").textContent = pts[2];
+      }
+
+      function duelStart() {
+        pts = { 1: 0, 2: 0 };
+        duel.classList.add("show");
+        dState = "between";
+        paint("idle", "Taiyaar? Tap karo", "Taiyaar? Tap karo");
+      }
+
+      function duelArm() {
+        dState = "wait";
+        paint("wait", "Ruko...");
+        dTimer = setTimeout(() => {
+          dState = "go";
+          goAt = performance.now();
+          paint("go", "TAP!");
+        }, randDelay());
+      }
+
+      function duelTap(p) {
+        const o = p === 1 ? 2 : 1;
+        if (dState === "between") return duelArm();
+        if (dState === "done") return duelStart();
+        if (dState === "wait") {
+          // Jaldi dabaya = foul, doosre ko point
+          clearTimeout(dTimer);
+          pts[o]++;
+          roundEnd(o, p === 1 ? ["Foul! 😅", "+1 point 🎉"] : ["+1 point 🎉", "Foul! 😅"]);
+        } else if (dState === "go") {
+          const ms = Math.round(performance.now() - goAt);
+          pts[p]++;
+          roundEnd(p, p === 1 ? [`Jeete! ${ms} ms`, "Haare 😢"] : ["Haare 😢", `Jeete! ${ms} ms`]);
+        }
+      }
+
+      function roundEnd(winner, [m1, m2]) {
+        dState = "pause";
+        if (navigator.vibrate) navigator.vibrate(60);
+        paint("idle", m1, m2);
+        halves[winner].className += " go";
+        if (pts[winner] >= WIN) {
+          setTimeout(() => {
+            dState = "done";
+            const w1 = winner === 1;
+            paint("idle", w1 ? "🏆 Match jeet gaye!" : "Match haar gaye", w1 ? "Match haar gaye" : "🏆 Match jeet gaye!");
+            $("m1").textContent += " · Tap = naya match";
+            $("m2").textContent += " · Tap = naya match";
+          }, 1200);
+        } else {
+          setTimeout(duelArm, 1500);
+        }
+      }
+
+      halves[1].addEventListener("pointerdown", (e) => { e.preventDefault(); duelTap(1); });
+      halves[2].addEventListener("pointerdown", (e) => { e.preventDefault(); duelTap(2); });
+
+      $("exitBtn").addEventListener("pointerdown", (e) => e.stopPropagation());
+      $("exitBtn").addEventListener("click", () => {
+        clearTimeout(dTimer);
+        dState = "off";
+        duel.classList.remove("show");
+      });
+
+      $("duelBtn").addEventListener("click", () => {
+        $("duelBtn").blur();
+        clearTimeout(sTimer);
+        sState = "idle";
+        setZone("idle", "⚡ Start", "Screen hari (green) ho toh jitna jaldi ho sake tap karo");
+        duelStart();
+      });
+
+      window.addEventListener("keydown", (e) => {
+        if (e.repeat) return;
+        if (dState !== "off") {
+          if (e.code === "KeyA") duelTap(2);
+          else if (e.code === "KeyL") duelTap(1);
+          else if (e.code === "Escape") $("exitBtn").click();
+        } else if (e.code === "Space" || e.code === "Enter") {
+          e.preventDefault();
+          soloTap();
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

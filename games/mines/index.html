@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Minesweeper – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+  <style>
+    body { user-select: none; -webkit-user-select: none; }
+    .bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: min(94vw, 560px);
+      background: var(--card);
+      border-radius: 14px;
+      padding: 8px 14px;
+      font-weight: 800;
+      font-size: 1.2rem;
+    }
+    .face { font-size: 1.8rem; background: none; border: none; cursor: pointer; }
+    .board {
+      display: grid;
+      gap: 2px;
+      background: #3f4a6b;
+      padding: 4px;
+      border-radius: 10px;
+      touch-action: manipulation;
+    }
+    .c {
+      width: var(--s);
+      height: var(--s);
+      border: none;
+      border-radius: 4px;
+      background: linear-gradient(145deg, #8fa3d9, #6d82bd);
+      font: 800 calc(var(--s) * 0.6) "Segoe UI", sans-serif;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      padding: 0;
+      color: #fff;
+      -webkit-touch-callout: none;
+    }
+    .c:hover:not(.open) { filter: brightness(1.12); }
+    .c.open { background: #dfe5f5; cursor: default; }
+    .c.boom { background: #ef4444 !important; }
+    .c.wrong { background: #fca5a5 !important; }
+    .n1 { color: #2563eb !important; } .n2 { color: #16a34a !important; } .n3 { color: #dc2626 !important; }
+    .n4 { color: #1e3a8a !important; } .n5 { color: #7f1d1d !important; } .n6 { color: #0e7490 !important; }
+    .n7 { color: #111 !important; } .n8 { color: #6b7280 !important; }
+    .flagbtn.active { background: #ef4444; color: #fff; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>💣 Minesweeper</h1>
+    <span class="spacer"></span>
+  </header>
+  <main class="stage">
+    <div class="row" id="levelRow">
+      <button class="btn small" data-level="easy">Easy 9×9</button>
+      <button class="btn small" data-level="medium">Medium 12×12</button>
+      <button class="btn small" data-level="hard">Hard 16×16</button>
+    </div>
+    <div class="bar">
+      <span id="mines">💣 10</span>
+      <button class="face" id="face" aria-label="New game">🙂</button>
+      <span id="time">⏱ 0</span>
+    </div>
+    <div class="board" id="board"></div>
+    <div class="row">
+      <button class="btn small flagbtn" id="flagBtn">🚩 Flag mode: OFF</button>
+    </div>
+    <div class="hint" id="hint">Left click = kholo · Right click = 🚩 flag · Khule number par click = aas-paas kholo</div>
+    <div class="muted" id="bestText" style="font-size:.85rem"></div>
+  </main>
+
+  <div class="modal" id="modal">
+    <div class="panel">
+      <h2 id="mTitle"></h2>
+      <p id="mText"></p>
+      <button class="btn primary" id="mBtn"></button>
+    </div>
+  </div>
+
+  <p class="credit">Game Zone by Shubham Goyal</p>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const LEVELS = { easy: [9, 9, 10], medium: [12, 12, 24], hard: [16, 16, 40] };
+      const $ = (id) => document.getElementById(id);
+      const boardEl = $("board");
+      if (IS_TOUCH) $("hint").textContent = "Tap = kholo · Lamba dabao ya 🚩 mode = flag · Khule number par tap = aas-paas kholo";
+
+      let level = store.get("mines_level", "easy");
+      let R, C, M, cells, started, over, opened, flags, t0, timer, flagMode = false;
+
+      function sizeCells() {
+        const max = Math.min(window.innerWidth - 32, 560);
+        const s = Math.max(16, Math.min(40, Math.floor((max - 8) / C) - 2));
+        boardEl.style.setProperty("--s", s + "px");
+      }
+
+      function newGame() {
+        [R, C, M] = LEVELS[level];
+        cells = [];
+        started = false;
+        over = false;
+        opened = 0;
+        flags = 0;
+        clearInterval(timer);
+        $("time").textContent = "⏱ 0";
+        $("face").textContent = "🙂";
+        hideModal();
+        boardEl.style.gridTemplateColumns = `repeat(${C}, auto)`;
+        boardEl.innerHTML = "";
+        for (let r = 0; r < R; r++)
+          for (let c = 0; c < C; c++) {
+            const el = document.createElement("button");
+            el.className = "c";
+            const cell = { r, c, mine: false, n: 0, open: false, flag: false, el };
+            cells.push(cell);
+            bind(cell);
+            boardEl.appendChild(el);
+          }
+        sizeCells();
+        updateMines();
+        const best = store.get("mines_best_" + level, null);
+        $("bestText").textContent = best ? `🏆 Best (${level}): ${best} sec` : "";
+      }
+
+      const at = (r, c) => (r < 0 || c < 0 || r >= R || c >= C ? null : cells[r * C + c]);
+      const around = (cell) => {
+        const out = [];
+        for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+          if (!dr && !dc) continue;
+          const n = at(cell.r + dr, cell.c + dc);
+          if (n) out.push(n);
+        }
+        return out;
+      };
+
+      // Pehla click hamesha safe: mines pehle click ke baad bichhti hain
+      function plant(first) {
+        const safe = new Set([first, ...around(first)]);
+        const pool = cells.filter((c) => !safe.has(c));
+        for (let i = 0; i < M; i++) {
+          const j = i + Math.floor(Math.random() * (pool.length - i));
+          [pool[i], pool[j]] = [pool[j], pool[i]];
+          pool[i].mine = true;
+        }
+        cells.forEach((c) => (c.n = around(c).filter((x) => x.mine).length));
+        started = true;
+        t0 = Date.now();
+        timer = setInterval(() => ($("time").textContent = "⏱ " + Math.floor((Date.now() - t0) / 1000)), 250);
+      }
+
+      function reveal(cell) {
+        if (over || cell.open || cell.flag) return;
+        if (!started) plant(cell);
+        if (cell.mine) return lose(cell);
+        // Khaali cell ho toh aas-paas sab khol do (flood fill)
+        const stack = [cell];
+        while (stack.length) {
+          const x = stack.pop();
+          if (x.open || x.flag) continue;
+          x.open = true;
+          opened++;
+          x.el.classList.add("open");
+          if (x.n) { x.el.textContent = x.n; x.el.classList.add("n" + x.n); }
+          else around(x).forEach((y) => !y.open && !y.mine && stack.push(y));
+        }
+        sound.beep(600 + Math.random() * 200, 0.03, "triangle", 0.03);
+        if (opened === R * C - M) win();
+      }
+
+      // Number ke aas-paas utne flag lage hon toh baaki sab khol do
+      function chord(cell) {
+        if (!cell.open || !cell.n) return;
+        const nb = around(cell);
+        if (nb.filter((x) => x.flag).length !== cell.n) return;
+        nb.forEach((x) => !x.open && !x.flag && reveal(x));
+      }
+
+      function toggleFlag(cell) {
+        if (over || cell.open) return;
+        cell.flag = !cell.flag;
+        flags += cell.flag ? 1 : -1;
+        cell.el.textContent = cell.flag ? "🚩" : "";
+        sound.beep(cell.flag ? 900 : 500, 0.05, "square", 0.03);
+        updateMines();
+      }
+
+      function updateMines() { $("mines").textContent = `💣 ${M - flags}`; }
+
+      function lose(cell) {
+        over = true;
+        clearInterval(timer);
+        $("face").textContent = "😵";
+        cell.el.classList.add("boom");
+        cells.forEach((c) => {
+          if (c.mine && !c.flag) { c.el.textContent = "💣"; c.el.classList.add("open"); }
+          if (!c.mine && c.flag) c.el.classList.add("wrong");
+        });
+        sound.beep(120, 0.5, "sawtooth", 0.08, 40);
+        if (navigator.vibrate) navigator.vibrate(200);
+        setTimeout(() => showModal("💥 Boom!", "Mine phat gayi. Phir se try karo!", "Naya game", newGame), 700);
+      }
+
+      function win() {
+        over = true;
+        clearInterval(timer);
+        const secs = Math.floor((Date.now() - t0) / 1000);
+        $("face").textContent = "😎";
+        cells.forEach((c) => c.mine && !c.flag && (c.el.textContent = "🚩"));
+        const best = store.get("mines_best_" + level, null);
+        const record = !best || secs < best;
+        if (record) store.set("mines_best_" + level, secs);
+        sound.beep(660, 0.1, "sine", 0.08); setTimeout(() => sound.beep(990, 0.2, "sine", 0.08), 120);
+        setTimeout(() => showModal(record ? "🏆 Naya Record!" : "🎉 Jeet gaye!", `${secs} second mein saari mines bacha li!`, "Naya game", newGame), 400);
+      }
+
+      function bind(cell) {
+        const el = cell.el;
+        let pressT = null, longDone = false;
+        el.addEventListener("contextmenu", (e) => { e.preventDefault(); toggleFlag(cell); });
+        el.addEventListener("pointerdown", (e) => {
+          if (e.pointerType === "mouse") return;
+          longDone = false;
+          pressT = setTimeout(() => {
+            longDone = true;
+            toggleFlag(cell);
+            if (navigator.vibrate) navigator.vibrate(30);
+          }, 380);
+        });
+        const cancel = () => clearTimeout(pressT);
+        el.addEventListener("pointerup", cancel);
+        el.addEventListener("pointerleave", cancel);
+        el.addEventListener("pointercancel", cancel);
+        el.addEventListener("click", () => {
+          sound.unlock();
+          if (longDone) { longDone = false; return; }
+          if (cell.open) return chord(cell);
+          if (flagMode) return toggleFlag(cell);
+          reveal(cell);
+        });
+      }
+
+      $("flagBtn").addEventListener("click", () => {
+        flagMode = !flagMode;
+        $("flagBtn").classList.toggle("active", flagMode);
+        $("flagBtn").textContent = `🚩 Flag mode: ${flagMode ? "ON" : "OFF"}`;
+      });
+      $("face").addEventListener("click", newGame);
+      document.querySelectorAll("#levelRow .btn").forEach((b) => b.addEventListener("click", () => {
+        level = b.dataset.level;
+        store.set("mines_level", level);
+        document.querySelectorAll("#levelRow .btn").forEach((x) => x.classList.toggle("active", x === b));
+        newGame();
+      }));
+      document.querySelectorAll("#levelRow .btn").forEach((x) => x.classList.toggle("active", x.dataset.level === level));
+      window.addEventListener("resize", () => C && sizeCells());
+      newGame();
+    })();
+  </script>
+</body>
+</html>

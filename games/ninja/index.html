@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Ninja Jump – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+</head>
+<body class="fullscreen">
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🥷 Ninja Jump</h1>
+    <span class="spacer"></span>
+  </header>
+  <main class="stage">
+    <div class="canvas-wrap" id="wrap"><canvas id="game"></canvas></div>
+    <div class="hint" id="hint">Space / Click = doosri deewar par kudo · Kaante aur shuriken se bacho, ⭐ uthao!</div>
+  </main>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const W = 360, H = 640, WALL = 44;
+      const NINJA_Y = H * 0.68, JUMP_TIME = 0.3;
+      const X_LEFT = WALL + 15, X_RIGHT = W - WALL - 15;
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const wrap = document.getElementById("wrap");
+      if (IS_TOUCH) document.getElementById("hint").textContent = "Tap = doosri deewar par kudo · Kaante aur shuriken se bacho, ⭐ uthao!";
+
+      let ninja, objs, dist, speed, stars, state, best, nextSpawn, wallOff, parts, lastSpikeSide;
+      best = store.get("ninja_best", 0);
+
+      function reset() {
+        ninja = { side: -1, jump: null, x: X_LEFT, run: 0, dead: false, vy: 0, y: NINJA_Y, spin: 0 };
+        objs = [];
+        parts = [];
+        dist = 0;
+        speed = 260;
+        stars = 0;
+        nextSpawn = 200;
+        wallOff = 0;
+        lastSpikeSide = 1;
+        state = "ready";
+      }
+
+      const score = () => Math.floor(dist / 10) + stars * 10;
+
+      // ---------- Obstacles ----------
+      function spawn() {
+        const r = Math.random();
+        const hard = Math.min(1, dist / 30000);
+        if (r < 0.55) {
+          // Kaante: zyada tar baari-baari dono deewaron par
+          const side = Math.random() < 0.7 ? -lastSpikeSide : lastSpikeSide;
+          lastSpikeSide = side;
+          const h = 70 + Math.random() * (60 + hard * 80);
+          objs.push({ type: "spike", side, y: -h - 10, h });
+          if (Math.random() < 0.5) objs.push({ type: "star", x: W / 2 + (Math.random() - 0.5) * 120, y: -h / 2 });
+          nextSpawn = h + 120 + Math.random() * 140 - hard * 60;
+        } else if (r < 0.8) {
+          const dir = Math.random() < 0.5 ? 1 : -1;
+          objs.push({ type: "shuriken", x: dir > 0 ? -20 : W + 20, y: -40, vx: dir * (120 + Math.random() * 80 + hard * 80), rot: 0 });
+          nextSpawn = 170 + Math.random() * 120;
+        } else {
+          // Chidiya: dheere se ek deewar ke paas udti hai
+          const side = Math.random() < 0.5 ? -1 : 1;
+          objs.push({ type: "bird", side, y: -30, flap: 0 });
+          nextSpawn = 180 + Math.random() * 100;
+        }
+      }
+
+      // ---------- Update ----------
+      function jump() {
+        sound.unlock();
+        if (state === "ready") { state = "play"; }
+        if (state === "over") { reset(); state = "play"; return; }
+        if (state !== "play" || ninja.jump) return;
+        ninja.jump = { from: ninja.side, t: 0 };
+        sound.beep(600, 0.08, "triangle", 0.05, 900);
+      }
+
+      function die() {
+        if (ninja.dead) return;
+        ninja.dead = true;
+        ninja.vy = -350;
+        sound.beep(200, 0.4, "sawtooth", 0.07, 50);
+        if (navigator.vibrate) navigator.vibrate(120);
+        for (let i = 0; i < 14; i++) parts.push({ x: ninja.x, y: ninja.y, vx: (Math.random() - 0.5) * 300, vy: (Math.random() - 0.7) * 300, life: 0.7, c: "#ef4444" });
+      }
+
+      function update(dt) {
+        for (const q of parts) { q.x += q.vx * dt; q.y += q.vy * dt; q.vy += 700 * dt; q.life -= dt; }
+        parts = parts.filter((q) => q.life > 0);
+        if (state !== "play") return;
+
+        if (ninja.dead) {
+          ninja.vy += 1400 * dt;
+          ninja.y += ninja.vy * dt;
+          ninja.spin += dt * 10;
+          if (ninja.y > H + 60) {
+            state = "over";
+            const s = score();
+            ninja.record = s > best;
+            if (ninja.record) { best = s; store.set("ninja_best", best); }
+          }
+          return;
+        }
+
+        speed = Math.min(580, 260 + dist * 0.008);
+        const move = speed * dt;
+        dist += move;
+        wallOff = (wallOff + move) % 40;
+        ninja.run += dt * 14;
+
+        nextSpawn -= move;
+        if (nextSpawn <= 0) spawn();
+
+        if (ninja.jump) {
+          const j = ninja.jump;
+          j.t += dt / JUMP_TIME;
+          const t = Math.min(1, j.t);
+          const from = j.from < 0 ? X_LEFT : X_RIGHT, to = j.from < 0 ? X_RIGHT : X_LEFT;
+          ninja.x = from + (to - from) * t;
+          ninja.spin = t * Math.PI * 2 * -j.from;
+          if (j.t >= 1) {
+            ninja.side = -j.from;
+            ninja.jump = null;
+            ninja.spin = 0;
+            ninja.x = ninja.side < 0 ? X_LEFT : X_RIGHT;
+          }
+        }
+
+        const nTop = ninja.y - 18, nBot = ninja.y + 18;
+        for (const o of objs) {
+          o.y += move;
+          if (o.type === "spike") {
+            // Deewar ke paas ho (chipke ho ya jump ke shuru/aakhir mein) toh kaanta lagega
+            const nearX = o.side < 0 ? ninja.x < X_LEFT + 18 : ninja.x > X_RIGHT - 18;
+            if (nearX && nBot > o.y + 4 && nTop < o.y + o.h - 4) die();
+          } else if (o.type === "shuriken") {
+            o.x += o.vx * dt;
+            o.rot += dt * 15;
+            if (Math.hypot(o.x - ninja.x, o.y - ninja.y) < 24) die();
+          } else if (o.type === "bird") {
+            o.flap += dt * 12;
+            const bx = o.side < 0 ? WALL + 34 : W - WALL - 34;
+            if (Math.abs(bx - ninja.x) < 26 && Math.abs(o.y - ninja.y) < 24) die();
+          } else if (o.type === "star" && !o.got) {
+            if (Math.hypot(o.x - ninja.x, o.y - ninja.y) < 30) {
+              o.got = true;
+              stars++;
+              sound.beep(1100, 0.1, "sine", 0.07, 1600);
+              for (let i = 0; i < 8; i++) parts.push({ x: o.x, y: o.y, vx: (Math.random() - 0.5) * 200, vy: (Math.random() - 0.5) * 200, life: 0.4, c: "#facc15" });
+            }
+          }
+        }
+        objs = objs.filter((o) => o.y < H + 200 && !(o.type === "star" && o.got) && !(o.type === "shuriken" && (o.x < -60 || o.x > W + 60)));
+      }
+
+      // ---------- Draw ----------
+      function drawBg() {
+        const g = ctx.createLinearGradient(0, 0, 0, H);
+        g.addColorStop(0, "#1e1b4b");
+        g.addColorStop(0.6, "#7c2d12");
+        g.addColorStop(1, "#f97316");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = "#fde68a";
+        ctx.beginPath(); ctx.arc(W / 2 + 40, 140, 46, 0, Math.PI * 2); ctx.fill();
+        // Door ki pagoda/pahaad silhouettes (dheere chalte hain)
+        const off = (dist * 0.15) % 300;
+        ctx.fillStyle = "rgba(30,10,30,0.55)";
+        for (let y = -300 + off; y < H + 300; y += 300) {
+          ctx.beginPath();
+          ctx.moveTo(WALL, y + 260);
+          ctx.lineTo(W / 2 - 30, y + 120);
+          ctx.lineTo(W / 2 + 10, y + 180);
+          ctx.lineTo(W / 2 + 60, y + 100);
+          ctx.lineTo(W - WALL, y + 260);
+          ctx.fill();
+        }
+      }
+
+      function drawWalls() {
+        for (const [x0, w] of [[0, WALL], [W - WALL, WALL]]) {
+          ctx.fillStyle = "#3f3f46";
+          ctx.fillRect(x0, 0, w, H);
+          ctx.fillStyle = "#52525b";
+          for (let y = -40 + wallOff, i = 0; y < H; y += 20, i++) {
+            const shift = (Math.floor((y - wallOff) / 20) % 2) * 10;
+            for (let bx = x0 - 10 + shift; bx < x0 + w; bx += 22) ctx.fillRect(Math.max(x0, bx), y, Math.min(20, x0 + w - Math.max(x0, bx)), 18);
+          }
+          ctx.fillStyle = "rgba(0,0,0,0.3)";
+          ctx.fillRect(x0 === 0 ? WALL - 4 : W - WALL, 0, 4, H);
+        }
+      }
+
+      function drawSpike(o) {
+        const x = o.side < 0 ? WALL : W - WALL;
+        const d = -o.side; // kaante deewar se andar ki taraf
+        ctx.fillStyle = "#e5e7eb";
+        ctx.strokeStyle = "#71717a";
+        ctx.lineWidth = 1.5;
+        for (let y = o.y; y < o.y + o.h - 6; y += 16) {
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(x + d * 18, y + 8);
+          ctx.lineTo(x, y + 16);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+        }
+      }
+
+      function drawShuriken(o) {
+        ctx.save();
+        ctx.translate(o.x, o.y);
+        ctx.rotate(o.rot);
+        ctx.fillStyle = "#94a3b8";
+        ctx.beginPath();
+        for (let i = 0; i < 8; i++) {
+          const a = (i * Math.PI) / 4, r = i % 2 ? 5 : 16;
+          ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = "#1f2937";
+        ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      }
+
+      function drawBird(o) {
+        const x = o.side < 0 ? WALL + 34 : W - WALL - 34;
+        const f = Math.sin(o.flap) * 8;
+        ctx.fillStyle = "#111827";
+        ctx.beginPath(); ctx.ellipse(x, o.y, 14, 9, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(x - 4, o.y); ctx.lineTo(x - 18, o.y - 10 - f); ctx.lineTo(x + 4, o.y - 2); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(x + 4, o.y); ctx.lineTo(x + 18, o.y - 10 - f); ctx.lineTo(x - 4, o.y - 2); ctx.fill();
+        ctx.fillStyle = "#f59e0b";
+        ctx.beginPath(); ctx.moveTo(x - o.side * 12, o.y); ctx.lineTo(x - o.side * 20, o.y + 3); ctx.lineTo(x - o.side * 12, o.y + 5); ctx.fill();
+        ctx.fillStyle = "#ef4444";
+        ctx.fillRect(x - o.side * 6 - 2, o.y - 4, 3, 3);
+      }
+
+      function drawStar(o) {
+        ctx.fillStyle = "#facc15";
+        ctx.beginPath();
+        for (let i = 0; i < 10; i++) {
+          const a = (i * Math.PI) / 5 - Math.PI / 2;
+          const r = i % 2 ? 6 : 13;
+          ctx.lineTo(o.x + Math.cos(a) * r, o.y + Math.sin(a) * r);
+        }
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      function drawNinja() {
+        ctx.save();
+        ctx.translate(ninja.x, ninja.y);
+        ctx.rotate(ninja.spin);
+        const facing = ninja.jump ? -ninja.jump.from : -ninja.side; // deewar se door dekhta hai
+        ctx.scale(facing, 1);
+        const legA = ninja.jump || ninja.dead ? 0.5 : Math.sin(ninja.run) * 0.6;
+        // headband tails
+        ctx.strokeStyle = "#dc2626";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(-8, -14);
+        ctx.quadraticCurveTo(-18, -12 + Math.sin(ninja.run * 1.5) * 4, -24, -6 + Math.sin(ninja.run) * 5);
+        ctx.stroke();
+        // legs
+        ctx.strokeStyle = "#111";
+        ctx.lineWidth = 5;
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(0, 6); ctx.lineTo(-Math.sin(legA) * 10 - 4, 18);
+        ctx.moveTo(0, 6); ctx.lineTo(Math.sin(legA) * 10 + 4, 18);
+        ctx.stroke();
+        // body + head
+        ctx.fillStyle = "#18181b";
+        ctx.beginPath(); ctx.ellipse(0, -2, 10, 12, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(2, -14, 10, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#dc2626";
+        ctx.fillRect(-8, -17, 20, 4);
+        ctx.fillStyle = "#fde68a";
+        ctx.fillRect(2, -12, 9, 4);
+        ctx.fillStyle = "#111";
+        ctx.fillRect(7, -11, 2, 2);
+        // arm + sword
+        ctx.strokeStyle = "#18181b";
+        ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.moveTo(0, -2); ctx.lineTo(10, 4); ctx.stroke();
+        ctx.strokeStyle = "#cbd5e1";
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(-6, -6); ctx.lineTo(-14, 10); ctx.stroke();
+        ctx.restore();
+      }
+
+      function centerText(t, y, size, color) {
+        ctx.font = `800 ${size}px "Segoe UI", sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.lineJoin = "round";
+        ctx.lineWidth = size / 4;
+        ctx.strokeStyle = "rgba(0,0,0,0.7)";
+        ctx.strokeText(t, W / 2, y);
+        ctx.fillStyle = color;
+        ctx.fillText(t, W / 2, y);
+      }
+
+      function draw() {
+        drawBg();
+        drawWalls();
+        for (const o of objs) {
+          if (o.type === "spike") drawSpike(o);
+          else if (o.type === "shuriken") drawShuriken(o);
+          else if (o.type === "bird") drawBird(o);
+          else if (!o.got) drawStar(o);
+        }
+        drawNinja();
+        for (const q of parts) {
+          ctx.globalAlpha = Math.max(0, q.life / 0.7);
+          ctx.fillStyle = q.c;
+          ctx.fillRect(q.x - 2, q.y - 2, 4, 4);
+        }
+        ctx.globalAlpha = 1;
+
+        centerText(String(score()), 50, 40, "#fff");
+        ctx.font = '700 14px "Segoe UI", sans-serif';
+        ctx.fillStyle = "#facc15";
+        ctx.textAlign = "center";
+        ctx.fillText(`⭐ ${stars}   ·   Best: ${best}`, W / 2, 82);
+
+        if (state === "ready") {
+          centerText("🥷 Ninja Jump", H * 0.36, 34, "#fff");
+          centerText(IS_TOUCH ? "Tap karke kudo" : "Space / Click karke kudo", H * 0.44, 18, "#fde68a");
+        }
+        if (state === "over") {
+          ctx.fillStyle = "rgba(15,16,32,0.6)";
+          ctx.fillRect(0, 0, W, H);
+          centerText(ninja.record ? "🏆 Naya Record!" : "💀 Ninja gir gaya!", H * 0.38, 30, "#fff");
+          centerText(`Score: ${score()} · Best: ${best}`, H * 0.46, 20, "#fde68a");
+          centerText(IS_TOUCH ? "Tap = dobara" : "Space = dobara", H * 0.54, 16, "#cbd5e1");
+        }
+      }
+
+      // ---------- Input ----------
+      canvas.addEventListener("pointerdown", (e) => { e.preventDefault(); jump(); });
+      window.addEventListener("keydown", (e) => {
+        if (["Space", "ArrowUp", "Enter", "ArrowLeft", "ArrowRight", "KeyW"].includes(e.code)) {
+          e.preventDefault();
+          if (!e.repeat) jump();
+        }
+      });
+
+      let last = performance.now();
+      function loop(now) {
+        const dt = Math.min((now - last) / 1000, 1 / 30);
+        last = now;
+        update(dt);
+        draw();
+        requestAnimationFrame(loop);
+      }
+      document.addEventListener("visibilitychange", () => { last = performance.now(); });
+      const resize = () => fitCanvas(canvas, ctx, wrap, W, H);
+      window.addEventListener("resize", resize);
+      resize();
+      reset();
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>

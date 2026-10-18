@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Rock Paper Scissors – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+  <style>
+    .arena {
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      text-align: center;
+    }
+    .hand {
+      font-size: clamp(3.5rem, 18vw, 5.5rem);
+      line-height: 1.2;
+      height: 1.3em;
+    }
+    .hand.shake { animation: shake 0.6s ease; }
+    @keyframes shake {
+      0%, 100% { transform: translateY(0); }
+      20%, 60% { transform: translateY(-18px); }
+      40%, 80% { transform: translateY(0); }
+    }
+    .vs { font-weight: 800; color: var(--muted); font-size: 1.2rem; }
+    .who { color: var(--muted); font-size: 0.85rem; margin-top: 4px; }
+    .choices {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      width: 100%;
+      max-width: 440px;
+    }
+    .choice {
+      background: var(--card);
+      border: 2px solid rgba(255, 255, 255, 0.08);
+      border-radius: var(--radius);
+      padding: 14px 6px;
+      color: var(--text);
+      font: inherit;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      transition: transform 0.1s, border-color 0.15s, background 0.15s;
+      touch-action: manipulation;
+    }
+    .choice:hover:not(:disabled) { background: var(--card-2); border-color: var(--accent); }
+    .choice:active:not(:disabled) { transform: scale(0.95); }
+    .choice:disabled { opacity: 0.5; cursor: default; }
+    .choice .e { font-size: clamp(2.2rem, 11vw, 3rem); }
+    .choice .n { font-weight: 600; font-size: 0.95rem; }
+    .streak { text-align: center; color: var(--muted); font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>✊ Rock Paper Scissors ✌️</h1>
+    <span class="spacer"></span>
+  </header>
+
+  <main class="stage">
+    <div class="row" id="modeRow">
+      <button class="btn small" data-mode="cpu">🤖 vs Computer</button>
+      <button class="btn small" data-mode="2p">👥 2 Players</button>
+    </div>
+
+    <div class="panel scores">
+      <div><div class="label" id="aLabel">Aap</div><div class="value good" id="youScore">0</div></div>
+      <div><div class="label">Draw</div><div class="value" id="drawScore">0</div></div>
+      <div><div class="label" id="bLabel">Computer</div><div class="value bad" id="cpuScore">0</div></div>
+    </div>
+
+    <div class="panel arena">
+      <div><div class="hand" id="youHand">✊</div><div class="who" id="aWho">Aap</div></div>
+      <div class="vs">VS</div>
+      <div><div class="hand" id="cpuHand">✊</div><div class="who" id="bWho">Computer</div></div>
+    </div>
+
+    <div class="status" id="status">Apna move chuno!</div>
+
+    <div class="choices">
+      <button class="choice" data-pick="rock"><span class="e">✊</span><span class="n">Rock</span></button>
+      <button class="choice" data-pick="paper"><span class="e">✋</span><span class="n">Paper</span></button>
+      <button class="choice" data-pick="scissors"><span class="e">✌️</span><span class="n">Scissors</span></button>
+    </div>
+
+    <div class="streak" id="streak"></div>
+    <button class="btn" id="resetBtn">Reset Score</button>
+  </main>
+
+  <p class="credit">Game Zone by Shubham Goyal</p>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const EMOJI = { rock: "✊", paper: "✋", scissors: "✌️" };
+      const NAME = { rock: "Rock", paper: "Paper", scissors: "Scissors" };
+      const BEATS = { rock: "scissors", paper: "rock", scissors: "paper" };
+      const PICKS = Object.keys(EMOJI);
+      const $ = (id) => document.getElementById(id);
+
+      const youHand = $("youHand");
+      const cpuHand = $("cpuHand");
+      const statusEl = $("status");
+      const streakEl = $("streak");
+      const buttons = document.querySelectorAll(".choice");
+
+      let mode = store.get("rps_mode", "cpu");
+      let scores = { you: 0, cpu: 0, draw: 0 };
+      let streak = 0;
+      let bestStreak = store.get("rps_best_streak", 0);
+      let p1Pick = null; // 2 Player mode mein Player 1 ka chhupa hua move
+
+      const names = () => (mode === "cpu" ? ["Aap", "Computer"] : ["Player 1", "Player 2"]);
+
+      function render() {
+        $("youScore").textContent = scores.you;
+        $("cpuScore").textContent = scores.cpu;
+        $("drawScore").textContent = scores.draw;
+        const [a, b] = names();
+        $("aLabel").textContent = $("aWho").textContent = a;
+        $("bLabel").textContent = $("bWho").textContent = b;
+        $("cpuScore").className = "value " + (mode === "cpu" ? "bad" : "p2");
+        $("youScore").className = "value " + (mode === "cpu" ? "good" : "p1");
+        streakEl.textContent = mode === "cpu" ? `🔥 Winning streak: ${streak}  ·  Best: ${bestStreak}` : "";
+      }
+
+      function promptText() {
+        if (mode === "cpu") return "Apna move chuno!";
+        return p1Pick
+          ? `<span class="p2">Player 2 ki baari</span> <span class="muted">(Player 1 ne chupke se chun liya 🤫)</span>`
+          : `<span class="p1">Player 1 ki baari</span> <span class="muted">(Player 2 dekhna mat! 🙈)</span>`;
+      }
+
+      function choose(pick) {
+        if (buttons[0].disabled) return;
+        if (mode === "cpu") return reveal(pick, PICKS[Math.floor(Math.random() * 3)]);
+        if (!p1Pick) {
+          p1Pick = pick;
+          youHand.textContent = "❓";
+          statusEl.innerHTML = promptText();
+          return;
+        }
+        const a = p1Pick;
+        p1Pick = null;
+        reveal(a, pick);
+      }
+
+      function reveal(a, b) {
+        buttons.forEach((x) => (x.disabled = true));
+        youHand.textContent = cpuHand.textContent = "✊";
+        youHand.classList.remove("shake");
+        cpuHand.classList.remove("shake");
+        void youHand.offsetWidth; // animation restart
+        youHand.classList.add("shake");
+        cpuHand.classList.add("shake");
+        statusEl.innerHTML = `<span class="muted">Rock... Paper... Scissors...</span>`;
+        const [na, nb] = names();
+
+        setTimeout(() => {
+          youHand.textContent = EMOJI[a];
+          cpuHand.textContent = EMOJI[b];
+
+          if (a === b) {
+            scores.draw++;
+            statusEl.innerHTML = `<span class="muted">🤝 Draw! Dono ne ${NAME[a]} chuna</span>`;
+          } else if (BEATS[a] === b) {
+            scores.you++;
+            if (mode === "cpu") {
+              streak++;
+              if (streak > bestStreak) { bestStreak = streak; store.set("rps_best_streak", bestStreak); }
+            }
+            const cls = mode === "cpu" ? "good" : "p1";
+            statusEl.innerHTML = `<span class="${cls}">🎉 ${na} jeete! ${NAME[a]} ne ${NAME[b]} ko haraya</span>`;
+          } else {
+            scores.cpu++;
+            streak = 0;
+            const cls = mode === "cpu" ? "bad" : "p2";
+            const msg = mode === "cpu" ? "😢 Aap haare!" : `🎉 ${nb} jeete!`;
+            statusEl.innerHTML = `<span class="${cls}">${msg} ${NAME[b]} ne ${NAME[a]} ko haraya</span>`;
+          }
+          render();
+          buttons.forEach((x) => (x.disabled = false));
+          if (mode === "2p") setTimeout(() => { if (!p1Pick) statusEl.innerHTML += `<br>${promptText()}`; }, 900);
+        }, 650);
+      }
+
+      buttons.forEach((b) => b.addEventListener("click", () => choose(b.dataset.pick)));
+
+      // Keyboard: R / P / S
+      window.addEventListener("keydown", (e) => {
+        const map = { KeyR: "rock", KeyP: "paper", KeyS: "scissors" };
+        if (map[e.code] && !e.repeat) choose(map[e.code]);
+      });
+
+      function resetAll() {
+        scores = { you: 0, cpu: 0, draw: 0 };
+        streak = 0;
+        p1Pick = null;
+        youHand.textContent = cpuHand.textContent = "✊";
+        statusEl.innerHTML = promptText();
+        render();
+      }
+
+      function setMode(m) {
+        mode = m;
+        store.set("rps_mode", m);
+        document.querySelectorAll("#modeRow .btn").forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
+        resetAll();
+      }
+
+      document.querySelectorAll("#modeRow .btn").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+      $("resetBtn").addEventListener("click", resetAll);
+
+      setMode(mode);
+    })();
+  </script>
+</body>
+</html>

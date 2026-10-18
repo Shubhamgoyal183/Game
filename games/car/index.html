@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Car Racing – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+  <style>
+    html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+    body { user-select: none; -webkit-user-select: none; height: 100vh; height: 100dvh; }
+    main.stage { min-height: 0; padding-bottom: 10px; gap: 10px; }
+    #wrap { flex: 1; width: 100%; min-height: 0; display: grid; place-items: center; }
+    canvas {
+      display: block;
+      border-radius: 12px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+      touch-action: none;
+    }
+    .hint { color: var(--muted); font-size: 0.8rem; text-align: center; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🏎️ Car Racing</h1>
+    <button class="btn small" id="pauseBtn">⏸</button>
+  </header>
+
+  <main class="stage">
+    <div class="row" id="modeRow">
+      <button class="btn small" data-mode="1p">👤 Solo</button>
+      <button class="btn small" data-mode="2p">👥 2 Players</button>
+    </div>
+    <div id="wrap"><canvas id="game"></canvas></div>
+    <div class="hint" id="hint"></div>
+  </main>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      // ================= Settings =================
+      // Har player ki apni sadak (RW x RH logical size). 2 Player mein do sadakein saath-saath.
+      const RW = 340, RH = 620, GAP = 12;
+      const ROAD_L = 54, ROAD_R = RW - 54, LANES = 3;
+      const LANE_W = (ROAD_R - ROAD_L) / LANES;
+      const CAR_W = 42, CAR_H = 76;
+      const STEER = 340;
+      const MIN_SPEED = 110, START_CRUISE = 280, MAX_CRUISE = 760;
+      const ACCEL = 240, BRAKE_DECEL = 560;
+      const LANE_SPEED = [180, 145, 110]; // har lane ki speed fixed, taaki gaadiyaan aapas mein na ghusein
+      const COLORS = ["#f97316", "#a855f7", "#22c55e", "#eab308", "#ec4899", "#14b8a6", "#f8fafc", "#0ea5e9"];
+
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const wrap = document.getElementById("wrap");
+      const pauseBtn = document.getElementById("pauseBtn");
+      const isTouch = !window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+      const CTRL_H = isTouch ? 84 : 0;     // phone par neeche buttons ki patti
+      const PLAYER_Y = RH - CTRL_H - 100;
+
+      let mode = store.get("car_mode", "1p");
+      let best = store.get("car_best", 0);
+      let players = [], state, countdown, W, H, newRecord = false, shake = 0;
+
+      // Dono players ko same traffic mile, isliye seed wala random
+      function rng(seed) {
+        return () => {
+          seed = (seed * 1664525 + 1013904223) % 4294967296;
+          return seed / 4294967296;
+        };
+      }
+
+      function resize() {
+        W = mode === "2p" ? RW * 2 + GAP : RW;
+        H = RH;
+        const dpr = Math.min(window.devicePixelRatio || 1, 3);
+        const scale = Math.min(wrap.clientWidth / W, wrap.clientHeight / H);
+        const cw = Math.floor(W * scale), ch = Math.floor(H * scale);
+        canvas.style.width = cw + "px";
+        canvas.style.height = ch + "px";
+        canvas.width = Math.floor(cw * dpr);
+        canvas.height = Math.floor(ch * dpr);
+        ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0);
+      }
+
+      function makePlayer(id, seed, color) {
+        const p = {
+          id, color,
+          x: RW / 2, y: PLAYER_Y, tilt: 0,
+          speed: START_CRUISE, cruise: START_CRUISE, t: 0,
+          dist: 0, coins: 0, close: 0, alive: true,
+          traffic: [], coinsOnRoad: [], scenery: [], skids: [], parts: [], popups: [],
+          nextSpawn: 320, nextScenery: 0,
+          rand: rng(seed), stripe: 0, boom: 0,
+          left: false, right: false, brake: false,
+        };
+        // Shuru mein hi kinare par nazaara bhar do
+        for (let y = -40; y < RH; y += 70) addScenery(p, y);
+        return p;
+      }
+
+      function reset() {
+        const seed = Math.floor(Math.random() * 1e9);
+        players = mode === "2p"
+          ? [makePlayer(1, seed, "#ef4444"), makePlayer(2, seed, "#3b82f6")]
+          : [makePlayer(1, seed, "#ef4444")];
+        state = "count";
+        countdown = 3;
+        shake = 0;
+        newRecord = false;
+        pauseBtn.textContent = "⏸";
+        resize();
+      }
+
+      const score = (p) => Math.floor(p.dist / 10) + p.coins * 10 + p.close * 5;
+
+      // ================= Update =================
+      function addScenery(p, y) {
+        for (const side of [-1, 1]) {
+          const r = Math.random();
+          const kind = r < 0.45 ? "tree" : r < 0.7 ? "house" : r < 0.85 ? "bush" : null;
+          if (!kind) continue;
+          const x = side < 0 ? 8 + Math.random() * 18 : RW - 8 - Math.random() * 18;
+          p.scenery.push({
+            kind, x, y: y + Math.random() * 30,
+            c: ["#f87171", "#fbbf24", "#60a5fa", "#a78bfa", "#f472b6"][Math.floor(Math.random() * 5)],
+          });
+        }
+      }
+
+      function spawn(p) {
+        const r = p.rand;
+        // Kabhi bhi teeno lane band nahi honge, ek raasta hamesha khula rahega
+        const lanes = [0, 1, 2].sort(() => r() - 0.5);
+        const count = r() < 0.35 + Math.min(0.25, p.t / 400) ? 2 : 1;
+        for (let i = 0; i < count; i++) {
+          p.traffic.push({
+            x: ROAD_L + LANE_W * (lanes[i] + 0.5),
+            y: -CAR_H - r() * 40,
+            v: LANE_SPEED[lanes[i]],
+            color: COLORS[Math.floor(r() * COLORS.length)],
+            truck: r() < 0.15,
+            passed: false,
+          });
+        }
+        if (r() < 0.55) p.coinsOnRoad.push({ x: ROAD_L + LANE_W * (lanes[2] + 0.5), y: -40 });
+        // Speed badhne ke saath traffic ke beech ki doori bhi kam hoti hai
+        p.nextSpawn = 200 + r() * 120 - Math.min(80, p.t * 1.2);
+      }
+
+      function puff(p, x, y, color, n, spread, life) {
+        for (let i = 0; i < n; i++) {
+          p.parts.push({
+            x, y, vx: (Math.random() - 0.5) * spread, vy: (Math.random() - 0.3) * spread,
+            r: 3 + Math.random() * 5, life, max: life, color,
+          });
+        }
+      }
+
+      function popup(p, text, color) {
+        p.popups.push({ x: p.x, y: p.y - 60, text, color, life: 0.9 });
+      }
+
+      function updatePlayer(p, dt) {
+        p.boom = Math.max(0, p.boom - dt);
+        for (const q of p.parts) {
+          q.x += q.vx * dt;
+          q.y += q.vy * dt + (p.alive ? p.speed * dt * 0.6 : 0);
+          q.life -= dt;
+          q.r += dt * 12;
+        }
+        p.parts = p.parts.filter((q) => q.life > 0);
+        for (const u of p.popups) { u.y -= 50 * dt; u.life -= dt; }
+        p.popups = p.popups.filter((u) => u.life > 0);
+        if (!p.alive) return;
+
+        p.t += dt;
+        let steer = 0;
+        if (p.left) steer -= 1;
+        if (p.right) steer += 1;
+        p.x = Math.max(ROAD_L + CAR_W / 2 + 2, Math.min(ROAD_R - CAR_W / 2 - 2, p.x + steer * STEER * dt));
+        p.tilt += (steer * 0.14 - p.tilt) * Math.min(1, dt * 10);
+
+        // Cruise speed time ke saath badhti hai. Brake dabao toh tezi se dheeme, chhodo toh wapas cruise tak.
+        p.cruise = Math.min(MAX_CRUISE, START_CRUISE + p.t * 7);
+        if (p.brake) {
+          p.speed = Math.max(MIN_SPEED, p.speed - BRAKE_DECEL * dt);
+          if (p.speed > MIN_SPEED + 20) {
+            if (Math.random() < 0.6) puff(p, p.x + (Math.random() < 0.5 ? -15 : 15), p.y + CAR_H / 2, "200,200,200", 1, 40, 0.5);
+            p.skids.push({ x: p.x - 15, y: p.y + CAR_H / 2 - 14 }, { x: p.x + 15, y: p.y + CAR_H / 2 - 14 });
+          }
+        } else {
+          const d = p.cruise - p.speed;
+          p.speed += Math.sign(d) * Math.min(Math.abs(d), ACCEL * dt);
+        }
+
+        const move = p.speed * dt;
+        p.dist += move;
+        p.stripe = (p.stripe + move) % 60;
+
+        p.nextSpawn -= move;
+        if (p.nextSpawn <= 0) spawn(p);
+        p.nextScenery -= move;
+        if (p.nextScenery <= 0) { addScenery(p, -90); p.nextScenery = 60 + Math.random() * 40; }
+
+        for (const s of p.scenery) s.y += move;
+        p.scenery = p.scenery.filter((s) => s.y < RH + 80);
+        for (const s of p.skids) s.y += move;
+        p.skids = p.skids.filter((s) => s.y < RH + 10);
+        if (p.skids.length > 400) p.skids.splice(0, p.skids.length - 400);
+
+        for (const t of p.traffic) {
+          t.y += (p.speed - t.v) * dt;
+          const th = t.truck ? CAR_H * 1.5 : CAR_H;
+          const gapX = Math.abs(t.x - p.x) - (CAR_W + CAR_W + 4) / 2;
+          if (gapX < -6 && Math.abs(t.y - p.y) < (CAR_H + th) / 2 - 8) return crash(p, t);
+          // Bilkul paas se nikle toh bonus
+          if (!t.passed && t.y - th / 2 > p.y + CAR_H / 2) {
+            t.passed = true;
+            if (gapX < 16) {
+              p.close++;
+              popup(p, "+5 Close!", "#5ee7ff");
+              beep(1200, 0.06, "triangle");
+            }
+          }
+        }
+        // Brake lagane par gaadiyaan aage nikal jaati hain, unhe bhi hatao
+        p.traffic = p.traffic.filter((t) => t.y < RH + 150 && t.y > -400);
+
+        for (const c of p.coinsOnRoad) {
+          c.y += move;
+          if (!c.taken && Math.abs(c.x - p.x) < 34 && Math.abs(c.y - p.y) < 50) {
+            c.taken = true;
+            p.coins++;
+            popup(p, "+10 ₹", "#facc15");
+            beep(990, 0.08);
+          }
+        }
+        p.coinsOnRoad = p.coinsOnRoad.filter((c) => !c.taken && c.y < RH + 40);
+      }
+
+      function crash(p, t) {
+        if (!p.alive) return;
+        p.alive = false;
+        p.boom = 1;
+        shake = 0.5;
+        puff(p, (p.x + t.x) / 2, (p.y + t.y) / 2, "255,140,0", 22, 220, 0.8);
+        puff(p, (p.x + t.x) / 2, (p.y + t.y) / 2, "90,90,90", 14, 120, 1.4);
+        beep(90, 0.45, "sawtooth");
+        if (navigator.vibrate) navigator.vibrate(180);
+        if (players.every((q) => !q.alive)) {
+          state = "over";
+          const top = Math.max(...players.map(score));
+          newRecord = top > best;
+          if (newRecord) { best = top; store.set("car_best", best); }
+        }
+      }
+
+      function update(dt) {
+        shake = Math.max(0, shake - dt);
+        if (state === "paused") return;
+        if (state === "count") {
+          const before = Math.ceil(countdown);
+          countdown -= dt;
+          if (Math.ceil(countdown) !== before && countdown > 0) beep(440, 0.12);
+          if (countdown <= 0) { state = "play"; beep(880, 0.25); }
+          return;
+        }
+        players.forEach((p) => updatePlayer(p, dt));
+      }
+
+      // ================= Sound =================
+      let ac = null, engine = null;
+      function audio() {
+        try {
+          if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+          if (ac.state === "suspended") ac.resume();
+        } catch { ac = null; }
+        return ac;
+      }
+      function beep(freq, dur, type = "square") {
+        const a = audio();
+        if (!a) return;
+        const t = a.currentTime, o = a.createOscillator(), g = a.createGain();
+        o.type = type;
+        o.frequency.value = freq;
+        g.gain.setValueAtTime(0.06, t);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        o.connect(g).connect(a.destination);
+        o.start(t);
+        o.stop(t + dur);
+      }
+      function updateEngine() {
+        const a = ac;
+        if (!a) return;
+        if (!engine) {
+          const o = a.createOscillator(), g = a.createGain();
+          o.type = "sawtooth";
+          g.gain.value = 0;
+          o.connect(g).connect(a.destination);
+          o.start();
+          engine = { o, g };
+        }
+        const p = players.find((q) => q.alive);
+        const on = state === "play" && p;
+        engine.g.gain.value = on ? 0.018 : 0;
+        if (on) engine.o.frequency.value = 40 + (p.speed / MAX_CRUISE) * 110;
+      }
+
+      // ================= Draw =================
+      function rr(x, y, w, h, r) {
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r);
+        ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r);
+        ctx.arcTo(x, y, x + w, y, r);
+        ctx.closePath();
+      }
+
+      function drawCar(x, y, color, tilt = 0, braking = false) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(tilt);
+        const w = CAR_W, h = CAR_H;
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        rr(-w / 2 + 4, -h / 2 + 6, w, h, 10);
+        ctx.fill();
+        ctx.fillStyle = "#111";
+        for (const sy of [-h / 2 + 11, h / 2 - 25]) {
+          rr(-w / 2 - 4, sy, 7, 15, 2); ctx.fill();
+          rr(w / 2 - 3, sy, 7, 15, 2); ctx.fill();
+        }
+        // body (beech se patla, sports car jaisa)
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(-w / 2 + 6, -h / 2);
+        ctx.lineTo(w / 2 - 6, -h / 2);
+        ctx.quadraticCurveTo(w / 2 + 1, -h / 2 + 4, w / 2, -h / 2 + 18);
+        ctx.lineTo(w / 2 - 2, h / 2 - 18);
+        ctx.quadraticCurveTo(w / 2, h / 2, w / 2 - 8, h / 2);
+        ctx.lineTo(-w / 2 + 8, h / 2);
+        ctx.quadraticCurveTo(-w / 2, h / 2, -w / 2 + 2, h / 2 - 18);
+        ctx.lineTo(-w / 2, -h / 2 + 18);
+        ctx.quadraticCurveTo(-w / 2 - 1, -h / 2 + 4, -w / 2 + 6, -h / 2);
+        ctx.fill();
+        // racing stripe
+        ctx.fillStyle = "rgba(255,255,255,0.25)";
+        ctx.fillRect(-4, -h / 2 + 2, 8, h - 4);
+        // windows
+        ctx.fillStyle = "rgba(15,25,45,0.9)";
+        rr(-w / 2 + 6, -h / 2 + 16, w - 12, 15, 4);
+        ctx.fill();
+        rr(-w / 2 + 7, h / 2 - 22, w - 14, 9, 3);
+        ctx.fill();
+        ctx.fillStyle = "rgba(255,255,255,0.12)";
+        rr(-w / 2 + 7, -h / 2 + 33, w - 14, h - 58, 5);
+        ctx.fill();
+        // headlights
+        ctx.fillStyle = "#fff7c2";
+        rr(-w / 2 + 4, -h / 2 + 1, 10, 4, 2); ctx.fill();
+        rr(w / 2 - 14, -h / 2 + 1, 10, 4, 2); ctx.fill();
+        // brake lights (brake par chamakti hain)
+        ctx.fillStyle = braking ? "#ff2020" : "#a31d1d";
+        if (braking) { ctx.shadowColor = "#ff2020"; ctx.shadowBlur = 14; }
+        rr(-w / 2 + 4, h / 2 - 5, 11, 4, 2); ctx.fill();
+        rr(w / 2 - 15, h / 2 - 5, 11, 4, 2); ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.restore();
+      }
+
+      function drawTruck(x, y, color) {
+        const h = CAR_H * 1.5, w = CAR_W + 4;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.fillRect(-w / 2 + 4, -h / 2 + 6, w, h);
+        ctx.fillStyle = "#111";
+        for (const sy of [-h / 2 + 10, h / 2 - 40, h / 2 - 22]) {
+          ctx.fillRect(-w / 2 - 3, sy, 6, 14);
+          ctx.fillRect(w / 2 - 3, sy, 6, 14);
+        }
+        ctx.fillStyle = color;
+        rr(-w / 2, -h / 2, w, 30, 8);
+        ctx.fill();
+        ctx.fillStyle = "rgba(15,25,45,0.9)";
+        ctx.fillRect(-w / 2 + 6, -h / 2 + 7, w - 12, 10);
+        ctx.fillStyle = "#e2e8f0";
+        rr(-w / 2, -h / 2 + 34, w, h - 34, 4);
+        ctx.fill();
+        ctx.fillStyle = color;
+        ctx.fillRect(-w / 2, -h / 2 + 60, w, 6);
+        ctx.fillStyle = "#a31d1d";
+        ctx.fillRect(-w / 2 + 3, h / 2 - 5, 8, 4);
+        ctx.fillRect(w / 2 - 11, h / 2 - 5, 8, 4);
+        ctx.restore();
+      }
+
+      function drawScenery(s) {
+        if (s.kind === "tree") {
+          ctx.fillStyle = "rgba(0,0,0,0.2)";
+          ctx.beginPath(); ctx.arc(s.x + 4, s.y + 4, 15, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#1f6f2a";
+          ctx.beginPath(); ctx.arc(s.x, s.y, 15, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#2f8f3a";
+          ctx.beginPath(); ctx.arc(s.x - 4, s.y - 4, 9, 0, Math.PI * 2); ctx.fill();
+        } else if (s.kind === "bush") {
+          ctx.fillStyle = "#3a9a45";
+          ctx.beginPath(); ctx.arc(s.x, s.y, 8, 0, Math.PI * 2); ctx.arc(s.x + 8, s.y + 3, 6, 0, Math.PI * 2); ctx.fill();
+        } else {
+          // Ghar (upar se chhat)
+          ctx.fillStyle = "rgba(0,0,0,0.25)";
+          ctx.fillRect(s.x - 16, s.y - 14, 34, 32);
+          ctx.fillStyle = s.c;
+          ctx.fillRect(s.x - 18, s.y - 18, 34, 32);
+          ctx.fillStyle = "rgba(0,0,0,0.18)";
+          ctx.fillRect(s.x - 1, s.y - 18, 2, 32);
+        }
+      }
+
+      function text(str, x, y, size, color = "#fff", weight = 800) {
+        ctx.font = `${weight} ${size}px "Segoe UI", system-ui, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.lineWidth = size / 5;
+        ctx.lineJoin = "round";
+        ctx.strokeStyle = "rgba(0,0,0,0.7)";
+        ctx.strokeText(str, x, y);
+        ctx.fillStyle = color;
+        ctx.fillText(str, x, y);
+      }
+
+      function drawRoad(p, ox) {
+        ctx.save();
+        ctx.translate(ox, 0);
+        ctx.beginPath();
+        ctx.rect(0, 0, RW, RH);
+        ctx.clip();
+
+        // Grass
+        ctx.fillStyle = "#3f9b3f";
+        ctx.fillRect(0, 0, RW, RH);
+        ctx.fillStyle = "#47a547";
+        for (let y = -80 + (p.stripe * 4 / 3) % 80; y < RH; y += 80) ctx.fillRect(0, y, RW, 40);
+
+        for (const s of p.scenery) drawScenery(s);
+
+        // Shoulder + road
+        ctx.fillStyle = "#9ca3af";
+        ctx.fillRect(ROAD_L - 12, 0, ROAD_R - ROAD_L + 24, RH);
+        ctx.fillStyle = "#3d4049";
+        ctx.fillRect(ROAD_L, 0, ROAD_R - ROAD_L, RH);
+        // Kinare ki red-white patti
+        for (let y = -60 + p.stripe; y < RH; y += 60) {
+          ctx.fillStyle = "#f1f5f9";
+          ctx.fillRect(ROAD_L - 8, y, 8, 30);
+          ctx.fillRect(ROAD_R, y, 8, 30);
+          ctx.fillStyle = "#dc2626";
+          ctx.fillRect(ROAD_L - 8, y + 30, 8, 30);
+          ctx.fillRect(ROAD_R, y + 30, 8, 30);
+        }
+        // Lane lines
+        ctx.fillStyle = "rgba(255,255,255,0.8)";
+        for (let l = 1; l < LANES; l++) {
+          const lx = ROAD_L + LANE_W * l - 2;
+          for (let y = -60 + p.stripe; y < RH; y += 60) ctx.fillRect(lx, y, 4, 32);
+        }
+        // Street lights
+        for (let y = -240 + (p.stripe * 4) % 240; y < RH; y += 240) {
+          for (const [sx, dir] of [[ROAD_L - 16, 1], [ROAD_R + 16, -1]]) {
+            ctx.fillStyle = "#4b5563";
+            ctx.fillRect(sx - 3, y - 3, 6, 6);
+            ctx.fillRect(Math.min(sx, sx + dir * 20), y - 1, 20, 2);
+            ctx.fillStyle = "rgba(255,240,180,0.9)";
+            ctx.beginPath(); ctx.arc(sx + dir * 20, y, 3, 0, Math.PI * 2); ctx.fill();
+          }
+        }
+
+        // Skid marks
+        ctx.fillStyle = "rgba(20,20,20,0.35)";
+        for (const s of p.skids) ctx.fillRect(s.x - 3, s.y, 6, 6);
+
+        // Tez speed par speed lines
+        const fast = (p.speed - 450) / 300;
+        if (fast > 0 && p.alive) {
+          ctx.strokeStyle = `rgba(255,255,255,${Math.min(0.35, fast * 0.35)})`;
+          ctx.lineWidth = 2;
+          for (let i = 0; i < 6; i++) {
+            const lx = ((i * 97 + p.dist * 0.01) % RW);
+            const ly = (i * 173 + p.dist * 1.3) % (RH + 80) - 80;
+            ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(lx, ly + 60); ctx.stroke();
+          }
+        }
+
+        // Coins
+        for (const c of p.coinsOnRoad) {
+          const sx = Math.abs(Math.sin(p.t * 5 + c.x));
+          ctx.fillStyle = "#facc15";
+          ctx.beginPath();
+          ctx.ellipse(c.x, c.y, 11 * (0.4 + sx * 0.6), 11, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "#a16207";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          if (sx > 0.6) {
+            ctx.fillStyle = "#a16207";
+            ctx.font = "800 12px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("₹", c.x, c.y + 1);
+          }
+        }
+
+        for (const t of p.traffic) t.truck ? drawTruck(t.x, t.y, t.color) : drawCar(t.x, t.y, t.color);
+        drawCar(p.x, p.y, p.alive ? p.color : "#4b4b4b", p.alive ? p.tilt : 0.35, p.brake && p.alive);
+
+        // Dhuaan / aag
+        for (const q of p.parts) {
+          ctx.fillStyle = `rgba(${q.color},${(q.life / q.max) * 0.7})`;
+          ctx.beginPath(); ctx.arc(q.x, q.y, q.r, 0, Math.PI * 2); ctx.fill();
+        }
+        for (const u of p.popups) {
+          ctx.globalAlpha = Math.min(1, u.life * 2);
+          text(u.text, u.x, u.y, 17, u.color);
+          ctx.globalAlpha = 1;
+        }
+
+        // HUD
+        ctx.fillStyle = "rgba(0,0,0,0.5)";
+        rr(8, 8, RW - 16, 44, 10);
+        ctx.fill();
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "#fff";
+        ctx.textAlign = "left";
+        ctx.font = '800 18px "Segoe UI", sans-serif';
+        ctx.fillText(`${mode === "2p" ? "P" + p.id + "  " : ""}${score(p)}`, 18, 30);
+        ctx.textAlign = "right";
+        ctx.font = '700 14px "Segoe UI", sans-serif';
+        ctx.fillText(`₹${p.coins}`, RW - 18, 22);
+        ctx.fillStyle = p.brake && p.alive ? "#ff6b6b" : "#ffcc33";
+        ctx.fillText(`${Math.round(p.speed / 3)} km/h${p.brake && p.alive ? " 🛑" : ""}`, RW - 18, 40);
+
+        if (CTRL_H) drawControls(p);
+
+        if (!p.alive && state === "play") {
+          ctx.fillStyle = "rgba(15,16,32,0.55)";
+          ctx.fillRect(0, 0, RW, RH);
+          text("💥 Crash!", RW / 2, RH / 2 - 20, 34);
+          text(`Score: ${score(p)}`, RW / 2, RH / 2 + 22, 20, "#ffcc33");
+        }
+        ctx.restore();
+      }
+
+      // Phone ke on-screen buttons: ◀  BRAKE  ▶
+      function drawControls(p) {
+        const y = RH - CTRL_H;
+        ctx.fillStyle = "rgba(10,12,28,0.75)";
+        ctx.fillRect(0, y, RW, CTRL_H);
+        const bw = RW / 3;
+        const btns = [["◀", p.left, "#5ee7ff"], ["BRAKE", p.brake, "#ff4d4d"], ["▶", p.right, "#5ee7ff"]];
+        btns.forEach(([label, on, col], i) => {
+          ctx.fillStyle = on ? col : "rgba(255,255,255,0.12)";
+          rr(i * bw + 8, y + 10, bw - 16, CTRL_H - 20, 14);
+          ctx.fill();
+          ctx.fillStyle = on ? "#0f1020" : "#fff";
+          ctx.font = `800 ${i === 1 ? 18 : 26}px "Segoe UI", sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(label, i * bw + bw / 2, y + CTRL_H / 2 + 1);
+        });
+      }
+
+      function draw() {
+        ctx.save();
+        if (shake > 0) ctx.translate((Math.random() - 0.5) * shake * 16, (Math.random() - 0.5) * shake * 16);
+        ctx.fillStyle = "#0f1020";
+        ctx.fillRect(-20, -20, W + 40, H + 40);
+        players.forEach((p, i) => drawRoad(p, i * (RW + GAP)));
+        ctx.restore();
+
+        if (state === "count") {
+          ctx.fillStyle = "rgba(15,16,32,0.35)";
+          ctx.fillRect(0, 0, W, H);
+          text(String(Math.ceil(countdown)), W / 2, H / 2 - 50, 90, "#ffcc33");
+          controlsText().split("\n").forEach((line, i) => text(line, W / 2, H / 2 + 30 + i * 26, 16));
+        }
+
+        if (state === "paused") {
+          ctx.fillStyle = "rgba(15,16,32,0.6)";
+          ctx.fillRect(0, 0, W, H);
+          text("⏸ Paused", W / 2, H / 2 - 20, 36);
+          text(isTouch ? "⏸ button dabao" : "P / Esc = resume", W / 2, H / 2 + 22, 18, "#a3a6d1");
+        }
+
+        if (state === "over") {
+          ctx.fillStyle = "rgba(15,16,32,0.72)";
+          ctx.fillRect(0, 0, W, H);
+          if (mode === "2p") {
+            const [a, b] = players.map(score);
+            text(a === b ? "🤝 Barabar!" : `🏆 Player ${a > b ? 1 : 2} jeeta!`, W / 2, H / 2 - 60, 36);
+            text(`P1: ${a}   ·   P2: ${b}`, W / 2, H / 2 - 10, 22, "#ffcc33");
+          } else {
+            const p = players[0];
+            text(newRecord ? "🏆 Naya Record!" : "💥 Game Over", W / 2, H / 2 - 80, 32);
+            text(`Score: ${score(p)}`, W / 2, H / 2 - 32, 28, "#ffcc33");
+            text(`${Math.floor(p.dist / 10)} m  ·  ₹${p.coins}  ·  ${p.close} close`, W / 2, H / 2 + 4, 15, "#fff", 600);
+            text(`Best: ${best}`, W / 2, H / 2 + 32, 17);
+          }
+          text(isTouch ? "Tap = dobara khelo" : "Space = dobara khelo", W / 2, H / 2 + 80, 18, "#a3a6d1");
+        }
+      }
+
+      function controlsText() {
+        if (mode === "2p") return isTouch ? "Apne neeche ke buttons use karo" : "P1: A D + S brake\nP2: ← → + ↓ brake";
+        return isTouch ? "◀ ▶ se steer, BRAKE se dheere" : "← → steer  ·  ↓ brake";
+      }
+
+      // ================= Input =================
+      const held = {};
+      function applyInput() {
+        players.forEach((p) => (p.left = p.right = p.brake = false));
+        if (!players.length) return;
+        if (mode === "2p") {
+          Object.assign(players[0], { left: !!held.KeyA, right: !!held.KeyD, brake: !!held.KeyS });
+          Object.assign(players[1], { left: !!held.ArrowLeft, right: !!held.ArrowRight, brake: !!held.ArrowDown });
+        } else {
+          Object.assign(players[0], {
+            left: !!(held.KeyA || held.ArrowLeft),
+            right: !!(held.KeyD || held.ArrowRight),
+            brake: !!(held.KeyS || held.ArrowDown),
+          });
+        }
+        for (const z of touches.values()) if (players[z.idx]) players[z.idx][z.btn] = true;
+      }
+
+      function togglePause() {
+        if (state === "play") { state = "paused"; pauseBtn.textContent = "▶"; }
+        else if (state === "paused") { state = "play"; pauseBtn.textContent = "⏸"; }
+      }
+
+      window.addEventListener("keydown", (e) => {
+        if (["ArrowLeft", "ArrowRight", "ArrowDown", "ArrowUp", "Space"].includes(e.code)) e.preventDefault();
+        held[e.code] = true;
+        if (!e.repeat) {
+          if ((e.code === "Space" || e.code === "Enter") && state === "over") reset();
+          if (e.code === "KeyP" || e.code === "Escape" || (e.code === "Space" && state !== "over")) togglePause();
+        }
+        applyInput();
+      });
+      window.addEventListener("keyup", (e) => { held[e.code] = false; applyInput(); });
+      pauseBtn.addEventListener("click", () => { togglePause(); pauseBtn.blur(); });
+
+      // Touch: har ungli yaad rakho ki woh kis player ka kaunsa button daba rahi hai
+      const touches = new Map();
+      function zoneFor(e) {
+        const r = canvas.getBoundingClientRect();
+        const fx = ((e.clientX - r.left) / r.width) * W;
+        const fy = ((e.clientY - r.top) / r.height) * H;
+        const idx = mode === "2p" && fx > RW + GAP / 2 ? 1 : 0;
+        const lx = fx - idx * (RW + GAP);
+        if (fy > RH - CTRL_H) return { idx, btn: lx < RW / 3 ? "left" : lx < (2 * RW) / 3 ? "brake" : "right" };
+        return { idx, btn: lx < RW / 2 ? "left" : "right" }; // upar ka hissa bhi steer karta hai
+      }
+      canvas.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        audio();
+        if (state === "over") { reset(); return; }
+        if (e.pointerType === "mouse") return; // laptop par keyboard
+        canvas.setPointerCapture(e.pointerId);
+        touches.set(e.pointerId, zoneFor(e));
+        applyInput();
+      });
+      canvas.addEventListener("pointermove", (e) => {
+        if (!touches.has(e.pointerId)) return;
+        touches.set(e.pointerId, zoneFor(e));
+        applyInput();
+      });
+      const lift = (e) => { if (touches.delete(e.pointerId)) applyInput(); };
+      canvas.addEventListener("pointerup", lift);
+      canvas.addEventListener("pointercancel", lift);
+
+      // ================= Loop =================
+      let last = performance.now();
+      function loop(now) {
+        const dt = Math.min((now - last) / 1000, 1 / 30);
+        last = now;
+        update(dt);
+        updateEngine();
+        draw();
+        requestAnimationFrame(loop);
+      }
+      document.addEventListener("visibilitychange", () => {
+        last = performance.now();
+        if (document.hidden && state === "play") togglePause();
+      });
+
+      function setMode(m) {
+        mode = m;
+        store.set("car_mode", m);
+        document.querySelectorAll("#modeRow .btn").forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
+        document.getElementById("hint").textContent = controlsText().replace("\n", "  ·  ") +
+          (m === "2p" && isTouch ? " · Phone ko aada (landscape) karke khelo" : "") +
+          " · ₹ = +10 · Close pass = +5" + (isTouch ? "" : " · P = pause");
+        document.activeElement && document.activeElement.blur();
+        touches.clear();
+        reset();
+      }
+      document.querySelectorAll("#modeRow .btn").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+
+      window.addEventListener("resize", resize);
+      setMode(mode);
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>

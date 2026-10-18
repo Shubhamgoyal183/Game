@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Archery – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+</head>
+<body class="fullscreen">
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🏹 Archery</h1>
+    <span class="spacer"></span>
+  </header>
+  <main class="stage">
+    <div class="row" id="modeRow">
+      <button class="btn small" data-mode="1p">👤 Solo</button>
+      <button class="btn small" data-mode="2p">👥 2 Players</button>
+    </div>
+    <div class="canvas-wrap" id="wrap"><canvas id="game"></canvas></div>
+    <div class="hint" id="hint">Mouse se peeche kheencho aur chhodo · Ya ↑ ↓ se nishana, Space daba ke rakho = taakat</div>
+  </main>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const W = 800, H = 450, GROUND = 395;
+      const BOW = { x: 120, y: 300 };
+      const GRAV = 480, ARROWS = 5, RING = 6, T_R = 60;
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const wrap = document.getElementById("wrap");
+      if (IS_TOUCH) document.getElementById("hint").textContent = "Screen par ungli rakh ke peeche kheencho aur chhodo · Phone aada (landscape) karke khelo";
+
+      let mode = store.get("arch_mode", "1p");
+      let best = store.get("arch_best", 0);
+      let target, wind, arrow, stuck, scores, turn, shotNo, aim, state, msg, msgT, clouds, newRecord;
+
+      function newTarget() {
+        const moving = shotNo >= 2; // teesre round se nishana hilta hai
+        target = {
+          x: 540 + Math.random() * 200,
+          baseY: 190 + Math.random() * 110,
+          y: 0, t: Math.random() * 6,
+          amp: moving ? 30 + Math.random() * 40 : 0,
+        };
+        target.y = target.baseY;
+        wind = Math.round((Math.random() * 2 - 1) * (20 + shotNo * 8));
+        stuck = stuck.filter((s) => !s.onTarget);
+      }
+
+      function reset() {
+        stuck = [];
+        scores = { 1: [], 2: [] };
+        turn = 1;
+        shotNo = 0;
+        arrow = null;
+        aim = { angle: -0.35, power: 0, dragging: false, charging: false };
+        state = "aim";
+        msg = "";
+        msgT = 0;
+        newRecord = false;
+        clouds = Array.from({ length: 5 }, () => ({ x: Math.random() * W, y: 30 + Math.random() * 120, s: 0.6 + Math.random() * 0.8 }));
+        newTarget();
+      }
+
+      const total = (p) => scores[p].reduce((a, b) => a + b, 0);
+
+      // ---------- Shooting ----------
+      function shoot() {
+        if (state !== "aim" || aim.power < 0.08) { aim.power = 0; return; }
+        const v = 320 + aim.power * 620;
+        arrow = { x: BOW.x, y: BOW.y, vx: Math.cos(aim.angle) * v, vy: Math.sin(aim.angle) * v, trail: [] };
+        aim.power = 0;
+        state = "fly";
+        sound.beep(300, 0.15, "triangle", 0.06, 120);
+      }
+
+      function result(points, x, y, onTarget) {
+        stuck.push({ x, y, angle: Math.atan2(arrow.vy, arrow.vx), onTarget, dy: onTarget ? y - target.y : 0, color: turnColor() });
+        arrow = null;
+        scores[turn].push(points);
+        msg = points === 10 ? "🎯 BULLSEYE! 10" : points > 0 ? `+${points}` : "❌ Miss";
+        msgT = 1.4;
+        if (points === 10) { sound.beep(880, 0.1, "sine", 0.08); setTimeout(() => sound.beep(1320, 0.2, "sine", 0.08), 100); }
+        else if (points > 0) sound.beep(500 + points * 50, 0.12, "sine", 0.07);
+        else sound.beep(150, 0.2, "sawtooth", 0.05);
+        state = "result";
+        setTimeout(nextTurn, 1300);
+      }
+
+      function nextTurn() {
+        if (state !== "result") return;
+        const done1 = scores[1].length >= ARROWS;
+        const done2 = mode === "1p" || scores[2].length >= ARROWS;
+        if (done1 && done2) return finish();
+        if (mode === "2p") {
+          turn = turn === 1 ? 2 : 1;
+          // Dono ne ek-ek teer chala liya, ab naya nishana aur naya hawa
+          if (turn === 1) { shotNo++; newTarget(); }
+        } else {
+          shotNo++;
+          newTarget();
+        }
+        state = "aim";
+      }
+
+      function finish() {
+        state = "over";
+        if (mode === "1p") {
+          newRecord = total(1) > best;
+          if (newRecord) { best = total(1); store.set("arch_best", best); }
+        }
+      }
+
+      function update(dt) {
+        msgT = Math.max(0, msgT - dt);
+        for (const c of clouds) { c.x += wind * 0.3 * dt; if (c.x > W + 80) c.x = -80; if (c.x < -80) c.x = W + 80; }
+        target.t += dt;
+        if (target.amp) target.y = target.baseY + Math.sin(target.t * 1.6) * target.amp;
+        for (const s of stuck) if (s.onTarget) s.y = target.y + s.dy;
+
+        if (state === "aim" && aim.charging) aim.power = Math.min(1, aim.power + dt * 0.9);
+
+        if (state === "fly" && arrow) {
+          const steps = 4;
+          for (let i = 0; i < steps && arrow; i++) {
+            const h = dt / steps;
+            const px = arrow.x, py = arrow.y;
+            arrow.vx += wind * h;
+            arrow.vy += GRAV * h;
+            arrow.x += arrow.vx * h;
+            arrow.y += arrow.vy * h;
+            // Nishane ki line paar ki?
+            if (px < target.x && arrow.x >= target.x) {
+              const t = (target.x - px) / (arrow.x - px);
+              const hy = py + (arrow.y - py) * t;
+              const d = Math.abs(hy - target.y);
+              if (d <= T_R) {
+                const pts = Math.max(1, 10 - Math.floor(d / RING));
+                return result(pts, target.x, hy, true);
+              }
+            }
+            if (arrow.y >= GROUND) return result(0, arrow.x, GROUND, false);
+            if (arrow.x > W + 40 || arrow.x < -40) return result(0, -100, -100, false);
+          }
+          arrow.trail.push({ x: arrow.x, y: arrow.y });
+          if (arrow.trail.length > 14) arrow.trail.shift();
+        }
+      }
+
+      // ---------- Draw ----------
+      function drawScene() {
+        const g = ctx.createLinearGradient(0, 0, 0, GROUND);
+        g.addColorStop(0, "#60a5fa");
+        g.addColorStop(1, "#dbeafe");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = "rgba(255,255,255,0.9)";
+        for (const c of clouds) {
+          ctx.beginPath();
+          ctx.arc(c.x, c.y, 18 * c.s, 0, Math.PI * 2);
+          ctx.arc(c.x + 22 * c.s, c.y - 8 * c.s, 22 * c.s, 0, Math.PI * 2);
+          ctx.arc(c.x + 44 * c.s, c.y, 17 * c.s, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = "#86efac";
+        ctx.beginPath();
+        ctx.moveTo(0, GROUND - 30);
+        for (let x = 0; x <= W; x += 40) ctx.lineTo(x, GROUND - 30 - Math.sin(x / 90) * 18);
+        ctx.lineTo(W, GROUND);
+        ctx.lineTo(0, GROUND);
+        ctx.fill();
+        ctx.fillStyle = "#4ade80";
+        ctx.fillRect(0, GROUND, W, H - GROUND);
+        ctx.fillStyle = "#22c55e";
+        for (let x = 0; x < W; x += 16) ctx.fillRect(x, GROUND, 8, 4);
+      }
+
+      function drawTarget() {
+        const { x, y } = target;
+        // stand
+        ctx.strokeStyle = "#78350f";
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.moveTo(x + 4, y + 20); ctx.lineTo(x + 30, GROUND);
+        ctx.moveTo(x + 4, y + 20); ctx.lineTo(x - 18, GROUND);
+        ctx.stroke();
+        const rings = ["#f8fafc", "#f8fafc", "#1f2937", "#1f2937", "#2563eb", "#2563eb", "#dc2626", "#dc2626", "#facc15", "#facc15"];
+        for (let i = 0; i < 10; i++) {
+          const ry = T_R - i * RING;
+          ctx.fillStyle = rings[i];
+          ctx.beginPath();
+          ctx.ellipse(x, y, Math.max(3, 16 * (ry / T_R)), ry, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "rgba(0,0,0,0.25)";
+          ctx.lineWidth = 0.6;
+          ctx.stroke();
+        }
+      }
+
+      function drawArrow(x, y, angle, color = turnColor(), len = 46) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(angle);
+        ctx.strokeStyle = "#78350f";
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(0, 0); ctx.stroke();
+        ctx.fillStyle = "#64748b";
+        ctx.beginPath(); ctx.moveTo(4, 0); ctx.lineTo(-6, -4); ctx.lineTo(-6, 4); ctx.fill();
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(-len - 6, -6); ctx.lineTo(-len + 8, 0); ctx.lineTo(-len - 6, 6); ctx.fill();
+        ctx.restore();
+      }
+
+      const turnColor = () => (turn === 1 ? "#ef4444" : "#3b82f6");
+
+      function drawArcher() {
+        const color = turnColor();
+        const a = aim.angle;
+        const pull = state === "aim" ? aim.power * 24 : 0;
+        // legs + body
+        ctx.strokeStyle = "#1f2937";
+        ctx.lineWidth = 6;
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(BOW.x - 30, GROUND); ctx.lineTo(BOW.x - 22, 345);
+        ctx.moveTo(BOW.x - 6, GROUND); ctx.lineTo(BOW.x - 18, 345);
+        ctx.stroke();
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(BOW.x - 34, 350); ctx.lineTo(BOW.x - 6, 350); ctx.lineTo(BOW.x - 10, 290); ctx.lineTo(BOW.x - 30, 290);
+        ctx.fill();
+        // head
+        ctx.fillStyle = "#f5c08a";
+        ctx.beginPath(); ctx.arc(BOW.x - 20, 274, 13, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#3f2a14";
+        ctx.beginPath(); ctx.arc(BOW.x - 22, 268, 13, Math.PI, Math.PI * 2); ctx.fill();
+        // quiver
+        ctx.fillStyle = "#92400e";
+        ctx.save(); ctx.translate(BOW.x - 36, 300); ctx.rotate(-0.4); ctx.fillRect(-5, -28, 10, 36); ctx.restore();
+
+        ctx.save();
+        ctx.translate(BOW.x, BOW.y);
+        ctx.rotate(a);
+        // front arm
+        ctx.strokeStyle = "#f5c08a";
+        ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.moveTo(-26, 0); ctx.lineTo(0, 0); ctx.stroke();
+        // bow
+        ctx.strokeStyle = "#7c2d12";
+        ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.arc(-12, 0, 34, -1.2, 1.2); ctx.stroke();
+        // string
+        const sx = -12 + 34 * Math.cos(1.2), sy = 34 * Math.sin(1.2);
+        ctx.strokeStyle = "#e5e7eb";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(sx, -sy); ctx.lineTo(-pull - 6, 0); ctx.lineTo(sx, sy); ctx.stroke();
+        ctx.restore();
+        if (state === "aim") drawArrow(BOW.x + Math.cos(a) * (30 - pull), BOW.y + Math.sin(a) * (30 - pull), a);
+      }
+
+      function drawAimGuide() {
+        if (state !== "aim" || aim.power < 0.05) return;
+        // Sirf shuru ki thodi si raah dikhao, baaki aapka andaaza
+        const v = 320 + aim.power * 620;
+        let x = BOW.x, y = BOW.y, vx = Math.cos(aim.angle) * v, vy = Math.sin(aim.angle) * v;
+        ctx.fillStyle = "rgba(255,255,255,0.8)";
+        for (let i = 0; i < 9; i++) {
+          for (let k = 0; k < 4; k++) { vx += wind * 0.01; vy += GRAV * 0.01; x += vx * 0.01; y += vy * 0.01; }
+          ctx.beginPath(); ctx.arc(x, y, 3 - i * 0.25, 0, Math.PI * 2); ctx.fill();
+        }
+        // power bar
+        ctx.fillStyle = "rgba(0,0,0,0.4)";
+        ctx.fillRect(BOW.x - 50, GROUND + 18, 100, 10);
+        ctx.fillStyle = `hsl(${120 - aim.power * 120}, 80%, 50%)`;
+        ctx.fillRect(BOW.x - 50, GROUND + 18, 100 * aim.power, 10);
+      }
+
+      function hud() {
+        ctx.fillStyle = "rgba(0,0,0,0.45)";
+        ctx.fillRect(0, 0, W, 44);
+        ctx.font = '700 16px "Segoe UI", sans-serif';
+        ctx.textBaseline = "middle";
+        const row = (p, x) => {
+          ctx.fillStyle = p === 1 ? "#fca5a5" : "#93c5fd";
+          ctx.textAlign = "left";
+          const name = mode === "1p" ? "Score" : `P${p}`;
+          const dots = Array.from({ length: ARROWS }, (_, i) => (scores[p][i] === undefined ? "·" : scores[p][i])).join(" ");
+          ctx.fillText(`${turn === p && state !== "over" ? "▶ " : ""}${name}: ${total(p)}   [ ${dots} ]`, x, 22);
+        };
+        row(1, 14);
+        if (mode === "2p") row(2, W / 2 + 10);
+        else {
+          ctx.textAlign = "right";
+          ctx.fillStyle = "#fde68a";
+          ctx.fillText(`Best: ${best}`, W - 14, 22);
+        }
+        // Wind
+        const wx = W - 110, wy = 70;
+        ctx.fillStyle = "rgba(0,0,0,0.35)";
+        ctx.fillRect(wx - 60, wy - 18, 160, 36);
+        ctx.fillStyle = "#fff";
+        ctx.textAlign = "left";
+        ctx.font = '700 14px "Segoe UI", sans-serif';
+        ctx.fillText(`💨 ${Math.abs(wind)}`, wx - 50, wy);
+        const len = Math.min(50, Math.abs(wind));
+        if (len > 1) {
+          const d = Math.sign(wind);
+          const cx = wx + 50;
+          ctx.strokeStyle = "#fff";
+          ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.moveTo(cx - d * len / 2, wy); ctx.lineTo(cx + d * len / 2, wy); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(cx + d * len / 2, wy); ctx.lineTo(cx + d * (len / 2 - 8), wy - 6); ctx.lineTo(cx + d * (len / 2 - 8), wy + 6); ctx.fill();
+        }
+        if (target.amp) {
+          ctx.fillStyle = "#fde68a";
+          ctx.fillText("↕ Chalta nishana", 14, 70);
+        }
+      }
+
+      function bigText(t, y, size, color) {
+        ctx.font = `800 ${size}px "Segoe UI", sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.lineJoin = "round";
+        ctx.lineWidth = size / 4;
+        ctx.strokeStyle = "rgba(0,0,0,0.7)";
+        ctx.strokeText(t, W / 2, y);
+        ctx.fillStyle = color;
+        ctx.fillText(t, W / 2, y);
+      }
+
+      function draw() {
+        drawScene();
+        drawTarget();
+        for (const s of stuck) drawArrow(s.x + Math.cos(s.angle) * 10, s.y + Math.sin(s.angle) * 10, s.angle, s.color);
+        drawArcher();
+        drawAimGuide();
+        if (arrow) {
+          ctx.fillStyle = "rgba(255,255,255,0.5)";
+          arrow.trail.forEach((p, i) => { ctx.beginPath(); ctx.arc(p.x, p.y, i / 6, 0, Math.PI * 2); ctx.fill(); });
+          drawArrow(arrow.x, arrow.y, Math.atan2(arrow.vy, arrow.vx));
+        }
+        hud();
+        if (msgT > 0) bigText(msg, 150, 34, msg.startsWith("❌") ? "#fca5a5" : "#fde68a");
+        if (state === "aim" && mode === "2p" && msgT === 0) bigText(`Player ${turn} ki baari`, 120, 22, turn === 1 ? "#fca5a5" : "#93c5fd");
+
+        if (state === "over") {
+          ctx.fillStyle = "rgba(15,16,32,0.65)";
+          ctx.fillRect(0, 0, W, H);
+          if (mode === "2p") {
+            const a = total(1), b = total(2);
+            bigText(a === b ? "🤝 Barabar!" : `🏆 Player ${a > b ? 1 : 2} jeeta!`, H / 2 - 40, 40, "#fff");
+            bigText(`P1: ${a}   ·   P2: ${b}`, H / 2 + 10, 24, "#fde68a");
+          } else {
+            bigText(newRecord ? "🏆 Naya Record!" : "🏹 Round khatam!", H / 2 - 40, 40, "#fff");
+            bigText(`Score: ${total(1)} / ${ARROWS * 10}   ·   Best: ${best}`, H / 2 + 10, 24, "#fde68a");
+          }
+          bigText(IS_TOUCH ? "Tap = dobara" : "Click / Space = dobara", H / 2 + 60, 18, "#cbd5e1");
+        }
+      }
+
+      // ---------- Input ----------
+      let dragStart = null;
+      canvas.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        sound.unlock();
+        if (state === "over") { reset(); return; }
+        if (state !== "aim") return;
+        canvas.setPointerCapture(e.pointerId);
+        dragStart = canvasPoint(canvas, e, W, H);
+        aim.dragging = true;
+      });
+      canvas.addEventListener("pointermove", (e) => {
+        if (!aim.dragging || !dragStart) return;
+        const p = canvasPoint(canvas, e, W, H);
+        const dx = dragStart.x - p.x, dy = dragStart.y - p.y; // ulta kheencho, teer saamne jaaye
+        const len = Math.hypot(dx, dy);
+        if (len > 5) aim.angle = Math.max(-1.45, Math.min(0.6, Math.atan2(dy, dx)));
+        aim.power = Math.min(1, len / 180);
+      });
+      const release = () => {
+        if (!aim.dragging) return;
+        aim.dragging = false;
+        dragStart = null;
+        shoot();
+      };
+      canvas.addEventListener("pointerup", release);
+      canvas.addEventListener("pointercancel", () => { aim.dragging = false; aim.power = 0; });
+
+      window.addEventListener("keydown", (e) => {
+        if (["ArrowUp", "ArrowDown", "Space"].includes(e.code)) e.preventDefault();
+        if (state === "over" && (e.code === "Space" || e.code === "Enter") && !e.repeat) return reset();
+        if (state !== "aim") return;
+        if (e.code === "ArrowUp" || e.code === "KeyW") aim.angle = Math.max(-1.45, aim.angle - 0.03);
+        if (e.code === "ArrowDown" || e.code === "KeyS") aim.angle = Math.min(0.6, aim.angle + 0.03);
+        if (e.code === "Space" && !e.repeat) { aim.charging = true; aim.power = 0; }
+      });
+      window.addEventListener("keyup", (e) => {
+        if (e.code === "Space" && aim.charging) { aim.charging = false; shoot(); }
+      });
+
+      function setMode(m) {
+        mode = m;
+        store.set("arch_mode", m);
+        document.querySelectorAll("#modeRow .btn").forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
+        document.activeElement && document.activeElement.blur();
+        reset();
+      }
+      document.querySelectorAll("#modeRow .btn").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+
+      let last = performance.now();
+      function loop(now) {
+        const dt = Math.min((now - last) / 1000, 1 / 30);
+        last = now;
+        update(dt);
+        draw();
+        requestAnimationFrame(loop);
+      }
+      document.addEventListener("visibilitychange", () => { last = performance.now(); });
+      const resize = () => fitCanvas(canvas, ctx, wrap, W, H);
+      window.addEventListener("resize", resize);
+      setMode(mode);
+      resize();
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Flappy Bird – Game Zone</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      background: #0f1020;
+      font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+      color: #fff;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    #wrap {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+    }
+    canvas {
+      display: block;
+      border-radius: 12px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+      cursor: pointer;
+    }
+    .topbar {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      right: 10px;
+      display: flex;
+      justify-content: space-between;
+      pointer-events: none;
+      z-index: 5;
+    }
+    .btn {
+      pointer-events: auto;
+      background: rgba(0, 0, 0, 0.45);
+      color: #fff;
+      border: none;
+      border-radius: 999px;
+      padding: 8px 14px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      backdrop-filter: blur(4px);
+    }
+    .btn:hover { background: rgba(0, 0, 0, 0.65); }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <a class="btn" href="../../index.html">← Home</a>
+    <button class="btn" id="muteBtn" aria-label="Sound on/off">🔊</button>
+  </div>
+  <div id="wrap"><canvas id="game"></canvas></div>
+  <script src="flappy.js"></script>
+</body>
+</html>
