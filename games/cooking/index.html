@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Cooking Rush – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+  <style>
+    body { user-select: none; -webkit-user-select: none; background: linear-gradient(#3b1d0e, #1a0f08); }
+    main.stage { gap: 10px; max-width: 560px; margin: 0 auto; }
+    .hud { display: flex; justify-content: space-between; width: 100%; font-weight: 800; font-size: 1.05rem; background: rgba(0,0,0,0.35); padding: 8px 14px; border-radius: 12px; }
+    .counter { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; width: 100%; }
+    .cust {
+      background: #fde68a; color: #3b1d0e; border-radius: 14px; min-height: 150px; padding: 8px 6px 10px;
+      display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; cursor: pointer;
+      border: 3px solid transparent; position: relative; transition: transform 0.1s;
+    }
+    .cust.empty { background: rgba(253,230,138,0.15); cursor: default; }
+    .cust:active:not(.empty) { transform: scale(0.97); }
+    .cust .face { font-size: 2rem; line-height: 1; }
+    .cust .pat { width: 90%; height: 6px; background: rgba(0,0,0,0.2); border-radius: 999px; overflow: hidden; }
+    .cust .pat div { height: 100%; background: #16a34a; }
+    .cust.ok { border-color: #22c55e; }
+    .cust.shake { animation: shake 0.35s; }
+    @keyframes shake { 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
+    .coin { position: absolute; top: 4px; font-weight: 800; color: #15803d; animation: up 0.9s forwards; }
+    @keyframes up { to { transform: translateY(-30px); opacity: 0; } }
+
+    /* Burger layers */
+    .stack { display: flex; flex-direction: column-reverse; align-items: center; }
+    .L { border-radius: 4px; margin-top: -2px; }
+    .stack.small .L { width: 54px; } .stack.big .L { width: 140px; }
+    .stack.small { --u: 5px; } .stack.big { --u: 12px; }
+    .bun_b { height: calc(var(--u) * 1.4); background: #d97706; border-radius: 3px 3px 10px 10px; }
+    .bun_t { height: calc(var(--u) * 2.2); background: radial-gradient(circle at 30% 40%, #fff7 2px, transparent 3px), radial-gradient(circle at 60% 30%, #fff7 2px, transparent 3px), #f59e0b; border-radius: 50% 50% 4px 4px / 90% 90% 4px 4px; }
+    .patty { height: calc(var(--u) * 1.3); background: #6b3410; border-radius: 6px; }
+    .cheese { height: calc(var(--u) * 0.6); background: #facc15; width: 105% !important; clip-path: polygon(0 0,100% 0,100% 60%,85% 100%,70% 60%,50% 100%,30% 60%,15% 100%,0 60%); }
+    .lettuce { height: calc(var(--u) * 0.7); background: #4ade80; border-radius: 40%; width: 108% !important; }
+    .tomato { height: calc(var(--u) * 0.7); background: #ef4444; border-radius: 4px; width: 92% !important; }
+    .onion { height: calc(var(--u) * 0.5); background: repeating-linear-gradient(90deg, #f5f3ff 0 8px, #c4b5fd 8px 10px); border-radius: 4px; }
+
+    .kitchen { display: grid; grid-template-columns: 1fr 1.1fr; gap: 10px; width: 100%; align-items: stretch; }
+    .plate {
+      background: radial-gradient(ellipse at center 85%, #f8fafc 0 45%, #cbd5e1 46% 50%, transparent 51%), #7c4a24;
+      border-radius: 14px; min-height: 170px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; padding-bottom: 22px; position: relative;
+    }
+    .plate .tools { position: absolute; top: 6px; right: 6px; display: flex; gap: 6px; }
+    .grill { background: #27272a; border-radius: 14px; padding: 8px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; align-content: center; }
+    .grill .slot {
+      aspect-ratio: 1; border-radius: 50%; background: repeating-linear-gradient(0deg, #3f3f46 0 6px, #18181b 6px 9px);
+      display: grid; place-items: center; cursor: pointer; position: relative; border: 2px solid #52525b;
+    }
+    .grill .slot .p { width: 70%; height: 70%; border-radius: 50%; }
+    .grill .slot.ready { border-color: #22c55e; box-shadow: 0 0 12px #22c55e; }
+    .grill .slot.burnt { border-color: #ef4444; }
+    .grill .label { grid-column: 1 / -1; text-align: center; color: #a1a1aa; font-size: 0.75rem; }
+    .grill .bar { position: absolute; bottom: -4px; left: 10%; width: 80%; height: 5px; background: #000; border-radius: 9px; overflow: hidden; }
+    .grill .bar div { height: 100%; }
+    .shelf { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; width: 100%; }
+    .ing {
+      background: #fef3c7; border: none; border-radius: 12px; padding: 8px 2px 6px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px;
+      font: 700 0.7rem "Segoe UI", sans-serif; color: #3b1d0e; touch-action: manipulation;
+    }
+    .ing:active { transform: scale(0.94); }
+    .ing .stack .L { width: 38px; }
+    .ing .stack { --u: 5px; height: 22px; justify-content: center; }
+    .mini { padding: 4px 8px; font-size: 0.8rem; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🍔 Cooking Rush</h1>
+    <span class="spacer"></span>
+  </header>
+  <main class="stage">
+    <div class="hud">
+      <span>📅 Din <span id="day">1</span></span>
+      <span>⏱ <span id="time">90</span></span>
+      <span>💰 <span id="coins">0</span>/<span id="target">0</span></span>
+      <span id="hearts">❤️❤️❤️</span>
+    </div>
+    <div class="counter" id="counter"></div>
+    <div class="kitchen">
+      <div class="plate" id="plate">
+        <div class="tools">
+          <button class="btn mini" id="undo">↶</button>
+          <button class="btn mini" id="trash">🗑</button>
+        </div>
+        <div class="stack big" id="plateStack"></div>
+      </div>
+      <div class="grill" id="grill"></div>
+    </div>
+    <div class="shelf" id="shelf"></div>
+    <div class="hint" id="hint">Order dekho → saamaan plate par lagao (neeche se upar) → customer par tap karke serve karo. Patty grill par pakao!</div>
+  </main>
+
+  <div class="modal" id="modal">
+    <div class="panel">
+      <h2 id="mTitle"></h2>
+      <p id="mText"></p>
+      <button class="btn primary" id="mBtn"></button>
+    </div>
+  </div>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const $ = (id) => document.getElementById(id);
+      const FACES = ["🧑", "👩", "👨‍🦱", "👵", "🧔", "👧", "👦", "👱‍♀️", "🧑‍🦰", "👴"];
+      const SHELF = [
+        { k: "bun_b", name: "Neeche bun" },
+        { k: "cheese", name: "Cheese" },
+        { k: "lettuce", name: "Salad" },
+        { k: "tomato", name: "Tamatar" },
+        { k: "onion", name: "Pyaaz" },
+        { k: "bun_t", name: "Upar bun" },
+      ];
+      const COOK = 3.5, BURN = 8.5;
+
+      let day = store.get("cook_day", 1);
+      let coins, target, timeLeft, hearts, plate, custs, grill, spawnT, running, last;
+
+      const layer = (k) => `<div class="L ${k}"></div>`;
+      const stackHTML = (arr, size) => `<div class="stack ${size}">${arr.map(layer).join("")}</div>`;
+
+      // ---------- Setup ----------
+      $("shelf").innerHTML =
+        SHELF.map((s, i) => `<button class="ing" data-k="${s.k}">${stackHTML([s.k], "")}${s.name}${IS_TOUCH ? "" : ` (${i + 1})`}</button>`).join("");
+      document.querySelectorAll(".ing").forEach((b) => b.addEventListener("click", () => addToPlate(b.dataset.k)));
+
+      function startDay() {
+        coins = 0;
+        target = 80 + (day - 1) * 45;
+        timeLeft = 90;
+        hearts = 3;
+        plate = [];
+        custs = [null, null, null];
+        grill = [null, null, null];
+        spawnT = 0.5;
+        running = true;
+        last = performance.now();
+        hideModal();
+        renderAll();
+      }
+
+      // ---------- Orders ----------
+      function makeOrder() {
+        const extras = ["cheese", "lettuce", "tomato", "onion"];
+        const n = Math.min(4, 1 + Math.floor(Math.random() * (1 + Math.min(3, day))));
+        const mid = ["patty"];
+        for (let i = 0; i < n; i++) mid.push(extras[Math.floor(Math.random() * extras.length)]);
+        if (day >= 3 && Math.random() < 0.3) mid.push("patty"); // double patty
+        mid.sort(() => Math.random() - 0.5);
+        return ["bun_b", ...mid, "bun_t"];
+      }
+
+      function spawnCustomer() {
+        const free = custs.map((c, i) => (c ? -1 : i)).filter((i) => i >= 0);
+        if (!free.length) return;
+        const i = free[Math.floor(Math.random() * free.length)];
+        const patience = Math.max(22, 45 - day * 3);
+        custs[i] = { face: FACES[Math.floor(Math.random() * FACES.length)], order: makeOrder(), pat: patience, max: patience };
+        sound.beep(880, 0.06, "sine", 0.05);
+        renderCounter();
+      }
+
+      // ---------- Actions ----------
+      function addToPlate(k) {
+        if (!running) return;
+        sound.unlock();
+        if (plate.length >= 9) return;
+        plate.push(k);
+        sound.beep(500 + plate.length * 40, 0.04, "triangle", 0.04);
+        renderPlate();
+      }
+
+      function grillTap(i) {
+        if (!running) return;
+        sound.unlock();
+        const g = grill[i];
+        if (!g) {
+          grill[i] = { t: 0 };
+          sound.beep(200, 0.15, "sawtooth", 0.03);
+        } else if (g.t >= BURN) {
+          grill[i] = null; // jali patty phenk do
+          coins = Math.max(0, coins - 3);
+          sound.beep(150, 0.2, "square", 0.04);
+        } else if (g.t >= COOK) {
+          if (plate.length >= 9) return;
+          plate.push("patty");
+          grill[i] = null;
+          sound.beep(700, 0.06, "triangle", 0.05);
+          renderPlate();
+        }
+        renderGrill();
+      }
+
+      function serve(i) {
+        const c = custs[i];
+        if (!running || !c) return;
+        const el = $("counter").children[i];
+        if (plate.join() !== c.order.join()) {
+          el.classList.remove("shake");
+          void el.offsetWidth;
+          el.classList.add("shake");
+          sound.beep(180, 0.15, "square", 0.04);
+          return;
+        }
+        const earned = 8 + c.order.length * 3 + Math.round((c.pat / c.max) * 10);
+        coins += earned;
+        plate = [];
+        custs[i] = null;
+        const pop = document.createElement("div");
+        pop.className = "coin";
+        pop.textContent = `+${earned} 💰`;
+        el.appendChild(pop);
+        [660, 880, 1100].forEach((f, k) => setTimeout(() => sound.beep(f, 0.08, "sine", 0.06), k * 70));
+        setTimeout(() => { renderCounter(); }, 500);
+        renderPlate();
+        renderHud();
+      }
+
+      // ---------- Render ----------
+      function renderHud() {
+        $("day").textContent = day;
+        $("time").textContent = Math.ceil(timeLeft);
+        $("coins").textContent = coins;
+        $("target").textContent = target;
+        $("hearts").textContent = "❤️".repeat(hearts) + "🖤".repeat(3 - hearts);
+      }
+
+      function renderCounter() {
+        $("counter").innerHTML = custs.map((c, i) => c
+          ? `<div class="cust ${plate.join() === c.order.join() ? "ok" : ""}" data-i="${i}">
+               <div class="pat"><div style="width:${(c.pat / c.max) * 100}%;background:${c.pat / c.max > 0.5 ? "#16a34a" : c.pat / c.max > 0.25 ? "#f59e0b" : "#dc2626"}"></div></div>
+               ${stackHTML(c.order, "small")}
+               <div class="face">${c.pat / c.max < 0.25 ? "😠" : c.face}</div>
+             </div>`
+          : `<div class="cust empty"></div>`).join("");
+        document.querySelectorAll(".cust[data-i]").forEach((el) => el.addEventListener("click", () => serve(+el.dataset.i)));
+      }
+
+      function updatePatienceBars() {
+        // Pura counter dobara banane ke bajaye sirf bars update (tap miss na ho)
+        const kids = $("counter").children;
+        custs.forEach((c, i) => {
+          if (!c || !kids[i] || !kids[i].querySelector) return;
+          const bar = kids[i].querySelector(".pat div");
+          if (!bar) return;
+          const r = c.pat / c.max;
+          bar.style.width = r * 100 + "%";
+          bar.style.background = r > 0.5 ? "#16a34a" : r > 0.25 ? "#f59e0b" : "#dc2626";
+          const face = kids[i].querySelector(".face");
+          if (face) face.textContent = r < 0.25 ? "😠" : c.face;
+        });
+      }
+
+      function renderPlate() {
+        $("plateStack").innerHTML = plate.map(layer).join("");
+        document.querySelectorAll(".cust[data-i]").forEach((el) => {
+          const c = custs[+el.dataset.i];
+          el.classList.toggle("ok", !!c && plate.join() === c.order.join());
+        });
+      }
+
+      function renderGrill() {
+        $("grill").innerHTML = `<div class="label">🔥 Grill — khaali par tap = patty rakho</div>` + grill.map((g, i) => {
+          if (!g) return `<div class="slot" data-i="${i}"></div>`;
+          const cooked = g.t >= COOK, burnt = g.t >= BURN;
+          const col = burnt ? "#111" : cooked ? "#6b3410" : `rgb(${200 - g.t * 25},${90 - g.t * 12},${90 - g.t * 12})`;
+          const pct = burnt ? 100 : cooked ? ((g.t - COOK) / (BURN - COOK)) * 100 : (g.t / COOK) * 100;
+          const barCol = burnt ? "#ef4444" : cooked ? "#f59e0b" : "#22c55e";
+          return `<div class="slot ${cooked && !burnt ? "ready" : ""} ${burnt ? "burnt" : ""}" data-i="${i}">
+            <div class="p" style="background:${col}"></div>
+            <div class="bar"><div style="width:${pct}%;background:${barCol}"></div></div></div>`;
+        }).join("");
+        document.querySelectorAll(".grill .slot").forEach((el) => el.addEventListener("pointerdown", (e) => { e.preventDefault(); grillTap(+el.dataset.i); }));
+      }
+
+      function renderAll() { renderHud(); renderCounter(); renderPlate(); renderGrill(); }
+
+      // ---------- Loop ----------
+      let grillRedraw = 0;
+      function tick(now) {
+        const dt = Math.min(0.1, (now - last) / 1000);
+        last = now;
+        if (running) {
+          timeLeft -= dt;
+          spawnT -= dt;
+          if (spawnT <= 0) {
+            spawnCustomer();
+            spawnT = Math.max(2.5, 7 - day * 0.6) * (0.7 + Math.random() * 0.6);
+          }
+          custs.forEach((c, i) => {
+            if (!c) return;
+            c.pat -= dt;
+            if (c.pat <= 0) {
+              custs[i] = null;
+              hearts--;
+              sound.beep(140, 0.3, "sawtooth", 0.05);
+              if (navigator.vibrate) navigator.vibrate(100);
+              renderCounter();
+            }
+          });
+          updatePatienceBars();
+          grill.forEach((g) => g && (g.t += dt));
+          grillRedraw -= dt;
+          if (grillRedraw <= 0) { renderGrill(); grillRedraw = 0.2; }
+          renderHud();
+          if (hearts <= 0) end(false, "3 customers naraz hokar chale gaye!");
+          else if (timeLeft <= 0) end(coins >= target, coins >= target ? `Din ki kamaai: ${coins} 💰` : `Sirf ${coins}/${target} 💰 kamaye`);
+        }
+        requestAnimationFrame(tick);
+      }
+
+      function end(win, text) {
+        running = false;
+        timeLeft = Math.max(0, timeLeft);
+        if (win) {
+          store.set("cook_day", day + 1);
+          [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => sound.beep(f, 0.15, "sine", 0.07), i * 110));
+          showModal(`🎉 Din ${day} poora!`, text, "Agla din ▶", () => { day++; startDay(); });
+        } else {
+          showModal("😓 Din kharab gaya", text, "Phir se try karo", startDay);
+        }
+      }
+
+      $("undo").addEventListener("click", () => { plate.pop(); renderPlate(); });
+      $("trash").addEventListener("click", () => { plate = []; renderPlate(); });
+      window.addEventListener("keydown", (e) => {
+        const n = parseInt(e.key, 10);
+        if (n >= 1 && n <= 6) addToPlate(SHELF[n - 1].k);
+        if (e.code === "KeyG") { const i = grill.findIndex((g) => !g || g.t >= COOK); if (i >= 0) grillTap(i); }
+        if (e.code === "Backspace") { plate.pop(); renderPlate(); }
+      });
+      if (IS_TOUCH) $("hint").textContent = "Order dekho → saamaan plate par lagao → customer par tap = serve. Patty grill par pakao, jalne mat do!";
+      else $("hint").textContent = "1–6 = saamaan · G = grill · Backspace = undo · Customer par click = serve. Patty jalne mat do!";
+
+      showModal("🍔 Cooking Rush", "Burger neeche wale bun se upar tak order jaisa banao. Patty grill par pakti hai — hari ho toh uthao, kaali = jal gayi!", "▶ Shuru karo", startDay);
+      running = false;
+      coins = 0; target = 0; timeLeft = 90; hearts = 3; plate = []; custs = [null, null, null]; grill = [null, null, null];
+      renderAll();
+      last = performance.now();
+      requestAnimationFrame(tick);
+    })();
+  </script>
+</body>
+</html>

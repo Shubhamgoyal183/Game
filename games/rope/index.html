@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Rope Cut – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+</head>
+<body class="fullscreen">
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🍬 Rope Cut</h1>
+    <button class="btn small" id="restartBtn">⟲</button>
+  </header>
+  <main class="stage">
+    <div class="canvas-wrap" id="wrap"><canvas id="game"></canvas></div>
+    <div class="hint" id="hint">Mouse daba ke rassi ke aar-paar ghumao = kaato · Candy ko Chomu tak pahunchao · 🫧 par click = phodo</div>
+  </main>
+
+  <div class="modal" id="modal">
+    <div class="panel">
+      <h2 id="mTitle"></h2>
+      <p id="mText"></p>
+      <button class="btn primary" id="mBtn"></button>
+    </div>
+  </div>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const W = 480, H = 720, GRAV = 1100, SEG = 16;
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const wrap = document.getElementById("wrap");
+      if (IS_TOUCH) document.getElementById("hint").textContent = "Ungli se rassi kaato · Candy ko Chomu tak pahunchao · 🫧 par tap = phodo";
+
+      // ---------- Levels ----------
+      const LEVELS = [
+        { candy: [240, 260], ropes: [[240, 90]], stars: [[240, 380], [240, 460], [240, 540]], monster: [240, 640] },
+        { candy: [240, 260], ropes: [[110, 90], [370, 90]], stars: [[300, 351], [323, 448], [337, 532]], monster: [340, 640] },
+        { candy: [330, 150], ropes: [[120, 120]], stars: [[300, 228], [226, 302], [130, 330]], monster: [400, 640] },
+        { candy: [240, 230], ropes: [[90, 80], [390, 80], [240, 60]], spikes: [{ x: 150, y: 470, w: 330, h: 18 }], stars: [[150, 330], [110, 430], [70, 560]], monster: [75, 650] },
+        { candy: [120, 610], ropes: [[120, 480]], bubbles: [[120, 650]], stars: [[120, 430], [120, 330], [120, 240]], monster: [120, 120] },
+        { candy: [190, 220], ropes: [[380, 90]], hooks: [{ x: 250, y: 320, r: 85 }], stars: [[260, 270], [262, 401], [184, 485]], monster: [150, 650] },
+        { candy: [240, 200], ropes: [[80, 70], [400, 70]], spikes: [{ x: 0, y: 700, w: 480, h: 20 }, { x: 200, y: 420, w: 80, h: 18 }], hooks: [{ x: 110, y: 420, r: 70 }], stars: [[308, 314], [334, 420], [350, 509]], monster: [370, 640] },
+        { candy: [360, 560], ropes: [[440, 470], [200, 560]], bubbles: [[360, 615]], spikes: [{ x: 290, y: 300, w: 190, h: 18 }], stars: [[257, 563], [224, 404], [208, 276]], monster: [200, 110] },
+      ];
+
+      let lvIdx = Math.min(store.get("rope_level", 0), LEVELS.length - 1);
+      let ropeCount = 0, pts, links, candy, stars, got, monster, hooks, bubbles, spikes, state, chomp, trail, swipe, t, cutLast;
+
+      // ---------- Physics (Verlet) ----------
+      function particle(x, y, inv = 1) { const p = { x, y, px: x, py: y, inv }; pts.push(p); return p; }
+      function rope(px, py, len) {
+        const pin = particle(px, py, 0);
+        const d = Math.hypot(candy.x - px, candy.y - py);
+        const L = len ?? d;
+        const n = Math.max(2, Math.round(L / SEG));
+        const rid = ropeCount++;
+        let prev = pin;
+        for (let i = 1; i < n; i++) {
+          const p = particle(px + ((candy.x - px) * i) / n, py + ((candy.y - py) * i) / n);
+          links.push({ a: prev, b: p, len: L / n, rid });
+          prev = p;
+        }
+        links.push({ a: prev, b: candy, len: L / n, rid });
+      }
+
+      function load(i) {
+        lvIdx = i;
+        const lv = LEVELS[i];
+        pts = []; links = []; trail = []; ropeCount = 0;
+        candy = particle(lv.candy[0], lv.candy[1], 0.35);
+        candy.bubble = null;
+        lv.ropes.forEach(([x, y]) => rope(x, y));
+        stars = lv.stars.map(([x, y]) => ({ x, y, got: false }));
+        got = 0;
+        monster = { x: lv.monster[0], y: lv.monster[1] };
+        hooks = (lv.hooks || []).map((h) => ({ ...h, used: false }));
+        bubbles = (lv.bubbles || []).map(([x, y]) => ({ x, y, on: true }));
+        spikes = lv.spikes || [];
+        state = "play";
+        chomp = 0;
+        t = 0;
+        hideModal();
+      }
+
+      function stepPhysics(dt) {
+        for (const p of pts) {
+          if (!p.inv) continue;
+          const vx = (p.x - p.px) * 0.996, vy = (p.y - p.py) * 0.996;
+          p.px = p.x; p.py = p.y;
+          const g = p === candy && candy.bubble ? -GRAV * 0.35 : GRAV;
+          p.x += vx;
+          p.y += vy + g * dt * dt;
+        }
+        for (let k = 0; k < 14; k++)
+          for (const l of links) {
+            const dx = l.b.x - l.a.x, dy = l.b.y - l.a.y, d = Math.hypot(dx, dy) || 0.001;
+            if (d <= l.len) continue; // rassi dheeli ho sakti hai, khinch nahi sakti
+            const diff = (d - l.len) / d, w = l.a.inv + l.b.inv;
+            if (!w) continue;
+            l.a.x += dx * diff * (l.a.inv / w); l.a.y += dy * diff * (l.a.inv / w);
+            l.b.x -= dx * diff * (l.b.inv / w); l.b.y -= dy * diff * (l.b.inv / w);
+          }
+      }
+
+      function cut(ax, ay, bx, by) {
+        const cross = (x1, y1, x2, y2, x3, y3, x4, y4) => {
+          const d = (x2 - x1) * (y4 - y3) - (y2 - y1) * (x4 - x3);
+          if (!d) return false;
+          const u = ((x3 - x1) * (y4 - y3) - (y3 - y1) * (x4 - x3)) / d;
+          const v = ((x3 - x1) * (y2 - y1) - (y3 - y1) * (x2 - x1)) / d;
+          return u >= 0 && u <= 1 && v >= 0 && v <= 1;
+        };
+        const before = links.length;
+        links = links.filter((l) => !cross(ax, ay, bx, by, l.a.x, l.a.y, l.b.x, l.b.y));
+        if (links.length < before && performance.now() - (cutLast || 0) > 80) {
+          cutLast = performance.now();
+          sound.beep(1200, 0.06, "triangle", 0.05, 500);
+        }
+      }
+
+      function update(dt) {
+        t += dt;
+        chomp = Math.max(0, chomp - dt);
+        if (state !== "play") {
+          if (state === "lost") stepPhysics(dt);
+          return;
+        }
+        stepPhysics(dt);
+        // Bubble
+        for (const b of bubbles) if (b.on && !candy.bubble && Math.hypot(b.x - candy.x, b.y - candy.y) < 34) { candy.bubble = b; b.on = false; sound.beep(600, 0.15, "sine", 0.05, 900); }
+        // Hook: paas aaye toh nayi rassi
+        for (const h of hooks) if (!h.used && Math.hypot(h.x - candy.x, h.y - candy.y) < h.r) { h.used = true; rope(h.x, h.y); sound.beep(500, 0.1, "square", 0.04, 800); }
+        // Stars
+        for (const s of stars) if (!s.got && Math.hypot(s.x - candy.x, s.y - candy.y) < 28) { s.got = true; got++; sound.beep(900 + got * 200, 0.12, "sine", 0.07); }
+        // Chomu
+        const dm = Math.hypot(monster.x - candy.x, monster.y - candy.y);
+        if (dm < 36) return win();
+        // Kaante / bahar gir gayi
+        for (const s of spikes) if (candy.x > s.x - 12 && candy.x < s.x + s.w + 12 && candy.y > s.y - 12 && candy.y < s.y + s.h + 12) return lose("💥 Candy kaanton mein phat gayi!");
+        if (candy.y > H + 60 || candy.y < -80 || candy.x < -60 || candy.x > W + 60) lose("😢 Candy gir gayi!");
+      }
+
+      function win() {
+        state = "won";
+        chomp = 1;
+        const key = "rope_stars_" + lvIdx;
+        store.set(key, Math.max(store.get(key, 0), got));
+        store.set("rope_level", Math.min(LEVELS.length - 1, Math.max(store.get("rope_level", 0), lvIdx + 1)));
+        [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => sound.beep(f, 0.14, "sine", 0.07), i * 100));
+        setTimeout(() => {
+          const stars = "⭐".repeat(got) + "☆".repeat(3 - got);
+          if (lvIdx + 1 < LEVELS.length) showModal(`😋 Yum! ${stars}`, `Level ${lvIdx + 1} paar!`, "Agla level ▶", () => load(lvIdx + 1));
+          else showModal(`🏆 Saare levels paar! ${stars}`, "Chomu ka pet bhar gaya! Aap champion ho.", "Shuru se khelo", () => load(0));
+        }, 700);
+      }
+
+      function lose(text) {
+        if (state !== "play") return;
+        state = "lost";
+        sound.beep(200, 0.4, "triangle", 0.06, 80);
+        setTimeout(() => showModal(text, `Level ${lvIdx + 1}`, "⟲ Phir se", () => load(lvIdx)), 600);
+      }
+
+      // ---------- Draw ----------
+      function drawBg() {
+        ctx.fillStyle = "#c9a26b";
+        ctx.fillRect(0, 0, W, H);
+        ctx.strokeStyle = "rgba(120,80,30,0.25)";
+        ctx.lineWidth = 2;
+        for (let y = 30; y < H; y += 60) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+        for (let y = 0; y < H; y += 60) for (let x = (y / 60) % 2 ? 0 : 60; x < W; x += 120) { ctx.beginPath(); ctx.moveTo(x, y + 30); ctx.lineTo(x, y + 90); ctx.stroke(); }
+      }
+
+      function drawMonster() {
+        const { x, y } = monster;
+        const near = Math.hypot(candy.x - x, candy.y - y) < 140 || chomp > 0;
+        ctx.fillStyle = "rgba(0,0,0,0.2)";
+        ctx.beginPath(); ctx.ellipse(x, y + 34, 38, 8, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#65a30d";
+        ctx.beginPath(); ctx.ellipse(x, y, 36, 34, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#4d7c0f";
+        ctx.beginPath(); ctx.moveTo(x - 22, y - 28); ctx.lineTo(x - 30, y - 46); ctx.lineTo(x - 12, y - 32); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(x + 22, y - 28); ctx.lineTo(x + 30, y - 46); ctx.lineTo(x + 12, y - 32); ctx.fill();
+        // aankhein candy ko dekhti hain
+        const a = Math.atan2(candy.y - y, candy.x - x);
+        for (const s of [-1, 1]) {
+          ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(x + s * 13, y - 12, 10, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#111"; ctx.beginPath(); ctx.arc(x + s * 13 + Math.cos(a) * 4, y - 12 + Math.sin(a) * 4, 4.5, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.fillStyle = "#7f1d1d";
+        const open = state === "won" ? 4 + Math.sin(t * 20) * 4 : near ? 14 : 4;
+        ctx.beginPath(); ctx.ellipse(x, y + 12, 18, open, 0, 0, Math.PI * 2); ctx.fill();
+        if (open > 8) { ctx.fillStyle = "#fff"; ctx.fillRect(x - 10, y + 12 - open, 6, 5); ctx.fillRect(x + 4, y + 12 - open, 6, 5); }
+        ctx.fillStyle = "#fde68a";
+        ctx.font = '700 11px "Segoe UI", sans-serif'; ctx.textAlign = "center";
+        ctx.fillText("Chomu", x, y + 52);
+      }
+
+      function drawCandy() {
+        if (state === "won") return;
+        const { x, y } = candy;
+        ctx.fillStyle = "#f472b6";
+        for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(x + s * 14, y); ctx.lineTo(x + s * 28, y - 10); ctx.lineTo(x + s * 28, y + 10); ctx.fill(); }
+        ctx.fillStyle = "#fff";
+        ctx.beginPath(); ctx.arc(x, y, 16, 0, Math.PI * 2); ctx.fill();
+        ctx.save(); ctx.beginPath(); ctx.arc(x, y, 16, 0, Math.PI * 2); ctx.clip();
+        ctx.strokeStyle = "#ef4444"; ctx.lineWidth = 6;
+        for (let k = -2; k <= 2; k++) { ctx.beginPath(); ctx.moveTo(x - 20 + k * 12, y - 20); ctx.lineTo(x + k * 12 + 4, y + 20); ctx.stroke(); }
+        ctx.restore();
+        ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.beginPath(); ctx.arc(x - 6, y - 6, 5, 0, Math.PI * 2); ctx.fill();
+        if (candy.bubble) {
+          ctx.strokeStyle = "rgba(186,230,253,0.9)"; ctx.lineWidth = 3;
+          ctx.fillStyle = "rgba(186,230,253,0.25)";
+          ctx.beginPath(); ctx.arc(x, y, 32, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        }
+      }
+
+      function drawStar(s) {
+        ctx.fillStyle = "#facc15";
+        ctx.strokeStyle = "#a16207";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        for (let i = 0; i < 10; i++) {
+          const a = (i * Math.PI) / 5 - Math.PI / 2 + Math.sin(t * 2) * 0.1;
+          const r = i % 2 ? 7 : 16;
+          ctx.lineTo(s.x + Math.cos(a) * r, s.y + Math.sin(a) * r);
+        }
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+      }
+
+      function draw() {
+        drawBg();
+        for (const h of hooks) {
+          ctx.strokeStyle = h.used ? "rgba(0,0,0,0.15)" : "rgba(30,64,175,0.6)";
+          ctx.setLineDash([6, 6]); ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(h.x, h.y, h.r, 0, Math.PI * 2); ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = "#1e40af"; ctx.beginPath(); ctx.arc(h.x, h.y, 8, 0, Math.PI * 2); ctx.fill();
+        }
+        for (const s of spikes) {
+          ctx.fillStyle = "#475569";
+          ctx.fillRect(s.x, s.y + s.h / 2, s.w, s.h / 2);
+          ctx.fillStyle = "#cbd5e1";
+          for (let x = s.x; x < s.x + s.w; x += 14) { ctx.beginPath(); ctx.moveTo(x, s.y + s.h / 2); ctx.lineTo(x + 7, s.y - 4); ctx.lineTo(x + 14, s.y + s.h / 2); ctx.fill(); }
+        }
+        for (const b of bubbles) if (b.on) {
+          ctx.strokeStyle = "rgba(186,230,253,0.9)"; ctx.lineWidth = 3;
+          ctx.fillStyle = "rgba(186,230,253,0.3)";
+          ctx.beginPath(); ctx.arc(b.x, b.y + Math.sin(t * 3) * 3, 26, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        }
+        stars.forEach((s) => !s.got && drawStar(s));
+        drawMonster();
+        // Rassiyan
+        ctx.lineCap = "round";
+        for (const l of links) {
+          ctx.strokeStyle = "#7c4a1e"; ctx.lineWidth = 5;
+          ctx.beginPath(); ctx.moveTo(l.a.x, l.a.y); ctx.lineTo(l.b.x, l.b.y); ctx.stroke();
+          ctx.strokeStyle = "#b07a3c"; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(l.a.x, l.a.y); ctx.lineTo(l.b.x, l.b.y); ctx.stroke();
+        }
+        for (const p of pts) if (!p.inv) {
+          ctx.fillStyle = "#334155"; ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#94a3b8"; ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
+        }
+        drawCandy();
+        // Kaatne ki line
+        if (trail.length > 1) {
+          ctx.strokeStyle = "rgba(255,255,255,0.85)";
+          ctx.lineWidth = 4;
+          ctx.beginPath(); ctx.moveTo(trail[0].x, trail[0].y);
+          for (const p of trail) ctx.lineTo(p.x, p.y);
+          ctx.stroke();
+        }
+        const now = performance.now();
+        trail = trail.filter((p) => now - p.t < 150);
+        // HUD
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.fillRect(0, 0, W, 40);
+        ctx.font = '800 18px "Segoe UI", sans-serif';
+        ctx.textBaseline = "middle"; ctx.textAlign = "left"; ctx.fillStyle = "#fff";
+        ctx.fillText(`Level ${lvIdx + 1}/${LEVELS.length}`, 14, 20);
+        ctx.textAlign = "right";
+        ctx.fillText("⭐".repeat(got) + "☆".repeat(3 - got), W - 14, 20);
+      }
+
+      // ---------- Input ----------
+      let last = null;
+      canvas.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        sound.unlock();
+        if (state !== "play") return;
+        const p = canvasPoint(canvas, e, W, H);
+        // Bubble phodo
+        if (candy.bubble && Math.hypot(p.x - candy.x, p.y - candy.y) < 40) { candy.bubble = null; sound.beep(900, 0.08, "sine", 0.06, 300); return; }
+        canvas.setPointerCapture(e.pointerId);
+        swipe = true;
+        last = p;
+        trail = [{ ...p, t: performance.now() }];
+      });
+      canvas.addEventListener("pointermove", (e) => {
+        if (!swipe) return;
+        const p = canvasPoint(canvas, e, W, H);
+        cut(last.x, last.y, p.x, p.y);
+        trail.push({ ...p, t: performance.now() });
+        last = p;
+      });
+      const up = () => { swipe = false; };
+      canvas.addEventListener("pointerup", up);
+      canvas.addEventListener("pointercancel", up);
+      document.getElementById("restartBtn").addEventListener("click", () => load(lvIdx));
+      window.addEventListener("keydown", (e) => { if (e.code === "KeyR") load(lvIdx); });
+
+      let lastT = performance.now(), acc = 0;
+      function loop(now) {
+        acc += Math.min(0.1, (now - lastT) / 1000);
+        lastT = now;
+        // Fixed step = har device par same physics
+        while (acc >= 1 / 120) { update(1 / 120); acc -= 1 / 120; }
+        draw();
+        requestAnimationFrame(loop);
+      }
+      document.addEventListener("visibilitychange", () => { lastT = performance.now(); });
+      const resize = () => fitCanvas(canvas, ctx, wrap, W, H);
+      window.addEventListener("resize", resize);
+      resize();
+      load(lvIdx);
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>

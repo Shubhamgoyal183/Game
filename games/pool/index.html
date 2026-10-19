@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Mini Pool – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+</head>
+<body class="fullscreen">
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🎱 Mini Pool</h1>
+    <span class="spacer"></span>
+  </header>
+  <main class="stage">
+    <div class="row" id="modeRow">
+      <button class="btn small" data-mode="2p">👥 2 Players (8-ball)</button>
+      <button class="btn small" data-mode="1p">👤 Solo practice</button>
+    </div>
+    <div class="canvas-wrap" id="wrap"><canvas id="game"></canvas></div>
+    <div class="hint" id="hint">Mouse se nishana · Daba ke peeche kheencho = taakat · Chhodo = shot</div>
+  </main>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const W = 800, H = 470, L = 50, T = 70, RR = 750, B = 430, R = 11;
+      const CY = (T + B) / 2;
+      const POCKETS = [
+        { x: L - 2, y: T - 2, r: 24 }, { x: (L + RR) / 2, y: T - 7, r: 22 }, { x: RR + 2, y: T - 2, r: 24 },
+        { x: L - 2, y: B + 2, r: 24 }, { x: (L + RR) / 2, y: B + 7, r: 22 }, { x: RR + 2, y: B + 2, r: 24 },
+      ];
+      const BALL_COLORS = ["#fff", "#facc15", "#2563eb", "#dc2626", "#7c3aed", "#f97316", "#16a34a", "#7f1d1d", "#111"];
+      const HEAD = { x: L + (RR - L) * 0.25, y: CY };
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const wrap = document.getElementById("wrap");
+      if (IS_TOUCH) document.getElementById("hint").textContent = "Table par ungli rakho, ulta kheencho (gulel jaisa) aur chhodo · Phone aada karke khelo";
+
+      let mode = store.get("pool_mode", "2p");
+      let balls, turn, groups, moving, shotLog, aim, state, msg, msgT, shots, best;
+      best = store.get("pool_best", null);
+
+      // ---------- Setup ----------
+      function rack() {
+        balls = [{ n: 0, x: HEAD.x, y: HEAD.y, vx: 0, vy: 0, in: false }];
+        // 8 beech mein, kono par ek solid aur ek stripe
+        const order = [1, 9, 2, 10, 8, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15];
+        const ax = L + (RR - L) * 0.72;
+        let k = 0;
+        const slots = [];
+        for (let row = 0; row < 5; row++)
+          for (let i = 0; i <= row; i++) slots.push({ x: ax + row * R * 1.75, y: CY + (i - row / 2) * R * 2.02 });
+        const nums = order.slice();
+        // Slot 4 (teesri row ka beech) = 8 ball
+        const eight = nums.splice(nums.indexOf(8), 1)[0];
+        nums.sort(() => Math.random() - 0.5);
+        slots.forEach((s, idx) => {
+          const n = idx === 4 ? eight : nums[k++];
+          balls.push({ n, x: s.x, y: s.y, vx: 0, vy: 0, in: false });
+        });
+      }
+
+      function reset() {
+        rack();
+        turn = 1;
+        groups = { 1: null, 2: null }; // "solid" | "stripe"
+        moving = false;
+        shots = 0;
+        aim = { a: Math.PI * 0.0, power: 0, drag: null };
+        state = "aim";
+        say(mode === "2p" ? "Player 1 ki baari — break shot!" : "Saari balls daalo, kam se kam shots mein!");
+      }
+
+      function say(t) { msg = t; msgT = 2.5; }
+
+      const cue = () => balls[0];
+      const groupOf = (n) => (n === 0 ? "cue" : n === 8 ? "eight" : n < 8 ? "solid" : "stripe");
+      const remaining = (g) => balls.filter((b) => !b.in && groupOf(b.n) === g).length;
+
+      // ---------- Physics ----------
+      function physics(dt) {
+        const N = 8;
+        for (let s = 0; s < N; s++) {
+          const h = dt / N;
+          for (const b of balls) {
+            if (b.in) continue;
+            b.x += b.vx * h;
+            b.y += b.vy * h;
+            // Pocket
+            for (const p of POCKETS) {
+              if ((b.x - p.x) ** 2 + (b.y - p.y) ** 2 < p.r * p.r) {
+                b.in = true; b.vx = b.vy = 0;
+                shotLog.pocketed.push(b.n);
+                sound.beep(220, 0.15, "sine", 0.08, 110);
+                break;
+              }
+            }
+            if (b.in) continue;
+            // Deewar (cushion)
+            if (b.x < L + R) { b.x = L + R; b.vx = Math.abs(b.vx) * 0.8; }
+            if (b.x > RR - R) { b.x = RR - R; b.vx = -Math.abs(b.vx) * 0.8; }
+            if (b.y < T + R) { b.y = T + R; b.vy = Math.abs(b.vy) * 0.8; }
+            if (b.y > B - R) { b.y = B - R; b.vy = -Math.abs(b.vy) * 0.8; }
+          }
+          // Ball se ball takkar (barabar wazan)
+          for (let i = 0; i < balls.length; i++) {
+            const a = balls[i];
+            if (a.in) continue;
+            for (let j = i + 1; j < balls.length; j++) {
+              const b = balls[j];
+              if (b.in) continue;
+              const dx = b.x - a.x, dy = b.y - a.y, d2 = dx * dx + dy * dy;
+              if (d2 >= 4 * R * R || d2 === 0) continue;
+              const d = Math.sqrt(d2), nx = dx / d, ny = dy / d;
+              const overlap = 2 * R - d;
+              a.x -= nx * overlap / 2; a.y -= ny * overlap / 2;
+              b.x += nx * overlap / 2; b.y += ny * overlap / 2;
+              const rel = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+              if (rel <= 0) continue;
+              const imp = rel * 0.97;
+              a.vx -= imp * nx; a.vy -= imp * ny;
+              b.vx += imp * nx; b.vy += imp * ny;
+              if (shotLog.firstHit === null && (a.n === 0 || b.n === 0)) shotLog.firstHit = a.n === 0 ? b.n : a.n;
+              if (rel > 40) sound.beep(900 + Math.random() * 300, 0.02, "square", Math.min(0.05, rel / 8000));
+            }
+          }
+        }
+        // Ragad (friction)
+        let any = false;
+        for (const b of balls) {
+          if (b.in) continue;
+          const sp = Math.hypot(b.vx, b.vy);
+          if (sp < 5) { b.vx = b.vy = 0; continue; }
+          any = true;
+          const ns = Math.max(0, sp - (70 + sp * 0.35) * dt);
+          b.vx *= ns / sp; b.vy *= ns / sp;
+        }
+        return any;
+      }
+
+      // ---------- Shot & rules ----------
+      function shoot() {
+        if (state !== "aim" || aim.power < 0.04) { aim.power = 0; return; }
+        const v = 120 + aim.power * 1300;
+        cue().vx = Math.cos(aim.a) * v;
+        cue().vy = Math.sin(aim.a) * v;
+        shotLog = { firstHit: null, pocketed: [] };
+        aim.power = 0;
+        state = "rolling";
+        shots++;
+        sound.beep(400, 0.06, "square", 0.06, 200);
+      }
+
+      function placeCue() {
+        const c = cue();
+        c.in = false; c.vx = c.vy = 0;
+        c.x = HEAD.x; c.y = HEAD.y;
+        // Jagah khaali na ho toh thoda khiskao
+        for (let tries = 0; tries < 40 && balls.some((b) => b !== c && !b.in && Math.hypot(b.x - c.x, b.y - c.y) < 2 * R + 1); tries++) {
+          c.y = CY + ((tries % 2 ? 1 : -1) * Math.ceil(tries / 2) * R * 2.2);
+          if (c.y < T + R || c.y > B - R) { c.y = CY; c.x -= R * 2.2; }
+        }
+      }
+
+      function endShot() {
+        const pot = shotLog.pocketed.filter((n) => n !== 0);
+        const scratch = shotLog.pocketed.includes(0);
+        if (scratch) placeCue();
+
+        if (mode === "1p") {
+          if (scratch) { shots++; say("😬 Safed ball gir gayi! +1 shot penalty"); }
+          else if (pot.length) say(`👍 ${pot.length} ball andar!`);
+          if (balls.every((b) => b.n === 0 || b.in)) {
+            state = "over";
+            const rec = best === null || shots < best;
+            if (rec) { best = shots; store.set("pool_best", best); }
+            say(`🏆 Table saaf! ${shots} shots${rec ? " — Naya record!" : ""}`);
+            return;
+          }
+          state = "aim";
+          return;
+        }
+
+        const me = turn, other = turn === 1 ? 2 : 1;
+        const myGroup = groups[me];
+        // 8 ball ka faisla
+        if (pot.includes(8)) {
+          const cleared = myGroup && remaining(myGroup) === 0;
+          const win = cleared && !scratch;
+          state = "over";
+          say(win ? `🏆 Player ${me} jeet gaya!` : `💥 8 ball galat waqt gira — Player ${other} jeeta!`);
+          [523, 659, 784].forEach((f, i) => setTimeout(() => sound.beep(f, 0.15, "sine", 0.07), i * 120));
+          return;
+        }
+        // Pehli baar ball gire toh group tay
+        if (!myGroup && pot.length && !scratch) {
+          const g = groupOf(pot[0]);
+          groups[me] = g;
+          groups[other] = g === "solid" ? "stripe" : "solid";
+          say(`Player ${me} = ${g === "solid" ? "● Solid (1–7)" : "◐ Stripe (9–15)"}`);
+        }
+        const g = groups[me];
+        const firstOk = shotLog.firstHit !== null && (!g || groupOf(shotLog.firstHit) === g || (remaining(g) === 0 && shotLog.firstHit === 8));
+        const foul = scratch || shotLog.firstHit === null || !firstOk;
+        const keep = !foul && pot.some((n) => !g || groupOf(n) === g);
+        if (foul) {
+          turn = other;
+          say(scratch ? `❌ Foul: safed ball giri! Player ${turn} ki baari` : shotLog.firstHit === null ? `❌ Foul: koi ball nahi lagi! Player ${turn}` : `❌ Foul: pehle apni ball maarni thi! Player ${turn}`);
+        } else if (keep) {
+          say(`✅ Player ${me} phir se!`);
+        } else {
+          turn = other;
+          say(`Player ${turn} ki baari`);
+        }
+        state = "aim";
+      }
+
+      // ---------- Aim prediction (ghost ball) ----------
+      function predict() {
+        const c = cue(), dx = Math.cos(aim.a), dy = Math.sin(aim.a);
+        let bestT = Infinity, hit = null;
+        for (const b of balls) {
+          if (b.in || b === c) continue;
+          const fx = b.x - c.x, fy = b.y - c.y;
+          const tca = fx * dx + fy * dy;
+          if (tca <= 0) continue;
+          const d2 = fx * fx + fy * fy - tca * tca;
+          if (d2 > 4 * R * R) continue;
+          const t = tca - Math.sqrt(4 * R * R - d2);
+          if (t < bestT) { bestT = t; hit = b; }
+        }
+        // Deewar tak ki doori
+        const tx = dx > 0 ? (RR - R - c.x) / dx : dx < 0 ? (L + R - c.x) / dx : Infinity;
+        const ty = dy > 0 ? (B - R - c.y) / dy : dy < 0 ? (T + R - c.y) / dy : Infinity;
+        const tw = Math.min(tx, ty);
+        if (!hit || tw < bestT) return { x: c.x + dx * tw, y: c.y + dy * tw, ball: null };
+        const gx = c.x + dx * bestT, gy = c.y + dy * bestT;
+        return { x: gx, y: gy, ball: hit, nx: (hit.x - gx) / (2 * R), ny: (hit.y - gy) / (2 * R) };
+      }
+
+      // ---------- Draw ----------
+      function drawTable() {
+        ctx.fillStyle = "#0f1020";
+        ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = "#6b3410";
+        ctx.beginPath(); ctx.roundRect ? ctx.roundRect(L - 30, T - 30, RR - L + 60, B - T + 60, 18) : ctx.rect(L - 30, T - 30, RR - L + 60, B - T + 60); ctx.fill();
+        ctx.fillStyle = "#8b4513";
+        ctx.fillRect(L - 22, T - 22, RR - L + 44, B - T + 44);
+        const g = ctx.createRadialGradient(W / 2, CY, 50, W / 2, CY, 420);
+        g.addColorStop(0, "#15803d");
+        g.addColorStop(1, "#14532d");
+        ctx.fillStyle = g;
+        ctx.fillRect(L, T, RR - L, B - T);
+        ctx.strokeStyle = "rgba(255,255,255,0.12)";
+        ctx.beginPath(); ctx.moveTo(HEAD.x, T); ctx.lineTo(HEAD.x, B); ctx.stroke();
+        ctx.fillStyle = "#fde68a";
+        for (let i = 1; i < 8; i++) if (i !== 4) { const x = L + ((RR - L) * i) / 8; ctx.fillRect(x - 2, T - 14, 4, 4); ctx.fillRect(x - 2, B + 10, 4, 4); }
+        for (let i = 1; i < 4; i++) { const y = T + ((B - T) * i) / 4; ctx.fillRect(L - 14, y - 2, 4, 4); ctx.fillRect(RR + 10, y - 2, 4, 4); }
+        for (const p of POCKETS) { ctx.fillStyle = "#050505"; ctx.beginPath(); ctx.arc(p.x, p.y, p.r - 4, 0, Math.PI * 2); ctx.fill(); }
+      }
+
+      function drawBall(b, x = b.x, y = b.y, r = R) {
+        const col = BALL_COLORS[b.n > 8 ? b.n - 8 : b.n];
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.beginPath(); ctx.arc(x + 2, y + 2, r, 0, Math.PI * 2); ctx.fill();
+        if (b.n > 8) {
+          ctx.fillStyle = "#f8fafc";
+          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+          ctx.save(); ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.clip();
+          ctx.fillStyle = col; ctx.fillRect(x - r, y - r * 0.55, r * 2, r * 1.1); ctx.restore();
+        } else {
+          ctx.fillStyle = col;
+          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+        }
+        if (b.n) {
+          ctx.fillStyle = "#fff";
+          ctx.beginPath(); ctx.arc(x, y, r * 0.48, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#111";
+          ctx.font = `800 ${r * 0.75}px "Segoe UI", sans-serif`;
+          ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText(b.n, x, y + 0.5);
+        }
+        ctx.fillStyle = "rgba(255,255,255,0.5)";
+        ctx.beginPath(); ctx.arc(x - r * 0.35, y - r * 0.4, r * 0.25, 0, Math.PI * 2); ctx.fill();
+      }
+
+      function hud() {
+        ctx.textBaseline = "middle";
+        if (mode === "2p") {
+          for (const p of [1, 2]) {
+            const x = p === 1 ? 20 : W - 20, align = p === 1 ? "left" : "right";
+            ctx.textAlign = align;
+            ctx.font = '800 16px "Segoe UI", sans-serif';
+            ctx.fillStyle = turn === p && state !== "over" ? "#fde047" : "#94a3b8";
+            const g = groups[p];
+            ctx.fillText(`${turn === p ? "▶ " : ""}Player ${p} ${g ? (g === "solid" ? "● Solid" : "◐ Stripe") : ""}`, x, 18);
+            if (g) {
+              const left = balls.filter((b) => !b.in && groupOf(b.n) === g);
+              left.forEach((b, i) => drawBall(b, p === 1 ? 30 + i * 22 : W - 30 - i * 22, 42, 8));
+              if (!left.length) { ctx.fillStyle = "#fde047"; ctx.font = '700 13px "Segoe UI", sans-serif'; ctx.fillText("Ab 8 ball daalo!", x, 42); }
+            }
+          }
+        } else {
+          ctx.textAlign = "left";
+          ctx.font = '800 16px "Segoe UI", sans-serif';
+          ctx.fillStyle = "#fde047";
+          ctx.fillText(`Shots: ${shots}`, 20, 22);
+          ctx.textAlign = "right";
+          ctx.fillStyle = "#94a3b8";
+          ctx.fillText(`Best: ${best ?? "–"}`, W - 20, 22);
+        }
+        if (msgT > 0) {
+          ctx.globalAlpha = Math.min(1, msgT);
+          ctx.textAlign = "center";
+          ctx.font = '800 17px "Segoe UI", sans-serif';
+          ctx.lineWidth = 5; ctx.strokeStyle = "rgba(0,0,0,0.8)"; ctx.lineJoin = "round";
+          ctx.strokeText(msg, W / 2, H - 16);
+          ctx.fillStyle = "#fff";
+          ctx.fillText(msg, W / 2, H - 16);
+          ctx.globalAlpha = 1;
+        }
+      }
+
+      function draw() {
+        drawTable();
+        if (state === "aim") {
+          const pr = predict(), c = cue();
+          ctx.strokeStyle = "rgba(255,255,255,0.6)";
+          ctx.setLineDash([6, 6]);
+          ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.moveTo(c.x, c.y); ctx.lineTo(pr.x, pr.y); ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.strokeStyle = "rgba(255,255,255,0.7)";
+          ctx.beginPath(); ctx.arc(pr.x, pr.y, R, 0, Math.PI * 2); ctx.stroke();
+          if (pr.ball) {
+            ctx.strokeStyle = "rgba(253,224,71,0.8)";
+            ctx.beginPath(); ctx.moveTo(pr.ball.x, pr.ball.y); ctx.lineTo(pr.ball.x + pr.nx * 60, pr.ball.y + pr.ny * 60); ctx.stroke();
+          }
+        }
+        for (const b of balls) if (!b.in) drawBall(b);
+        if (state === "aim") {
+          // Cue stick
+          const c = cue(), back = 16 + aim.power * 70;
+          ctx.save();
+          ctx.translate(c.x, c.y);
+          ctx.rotate(aim.a);
+          ctx.fillStyle = "#d6a35c"; ctx.fillRect(-back - 260, -3, 250, 6);
+          ctx.fillStyle = "#1f2937"; ctx.fillRect(-back - 260, -3.5, 70, 7);
+          ctx.fillStyle = "#e0f2fe"; ctx.fillRect(-back - 12, -2.5, 6, 5);
+          ctx.restore();
+          if (aim.power > 0) {
+            ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(W / 2 - 80, H - 46, 160, 10);
+            ctx.fillStyle = `hsl(${120 - aim.power * 120},85%,50%)`; ctx.fillRect(W / 2 - 80, H - 46, 160 * aim.power, 10);
+          }
+        }
+        hud();
+        if (state === "over") {
+          ctx.fillStyle = "rgba(0,0,0,0.5)";
+          ctx.fillRect(0, 0, W, H);
+          ctx.textAlign = "center";
+          ctx.font = '800 30px "Segoe UI", sans-serif';
+          ctx.fillStyle = "#fff";
+          ctx.fillText(msg, W / 2, H / 2 - 10);
+          ctx.font = '600 16px "Segoe UI", sans-serif';
+          ctx.fillStyle = "#cbd5e1";
+          ctx.fillText(IS_TOUCH ? "Tap = naya game" : "Click = naya game", W / 2, H / 2 + 26);
+        }
+      }
+
+      // ---------- Input ----------
+      canvas.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        sound.unlock();
+        if (state === "over") { reset(); return; }
+        if (state !== "aim") return;
+        canvas.setPointerCapture(e.pointerId);
+        const p = canvasPoint(canvas, e, W, H);
+        if (e.pointerType === "mouse") aim.a = Math.atan2(p.y - cue().y, p.x - cue().x);
+        aim.drag = { x: p.x, y: p.y, mouse: e.pointerType === "mouse" };
+      });
+      canvas.addEventListener("pointermove", (e) => {
+        if (state !== "aim") return;
+        const p = canvasPoint(canvas, e, W, H);
+        if (!aim.drag) {
+          if (e.pointerType === "mouse") aim.a = Math.atan2(p.y - cue().y, p.x - cue().x);
+          return;
+        }
+        const dx = aim.drag.x - p.x, dy = aim.drag.y - p.y, len = Math.hypot(dx, dy);
+        // Touch: gulel jaisa (ulta kheencho). Mouse: nishana pehle se lock, kheenchne se sirf taakat
+        if (!aim.drag.mouse && len > 8) aim.a = Math.atan2(dy, dx);
+        aim.power = Math.min(1, len / 200);
+      });
+      const up = () => { if (aim && aim.drag) { aim.drag = null; shoot(); } };
+      canvas.addEventListener("pointerup", up);
+      canvas.addEventListener("pointercancel", () => { if (aim) { aim.drag = null; aim.power = 0; } });
+      let charging = false;
+      window.addEventListener("keydown", (e) => {
+        if (state !== "aim") return;
+        if (e.code === "ArrowLeft") aim.a -= e.shiftKey ? 0.002 : 0.012;
+        if (e.code === "ArrowRight") aim.a += e.shiftKey ? 0.002 : 0.012;
+        if (e.code === "Space") { e.preventDefault(); if (!e.repeat) { charging = true; aim.power = 0; } }
+      });
+      window.addEventListener("keyup", (e) => { if (e.code === "Space" && charging) { charging = false; shoot(); } });
+
+      function setMode(m) {
+        mode = m;
+        store.set("pool_mode", m);
+        document.querySelectorAll("#modeRow .btn").forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
+        document.activeElement && document.activeElement.blur();
+        reset();
+      }
+      document.querySelectorAll("#modeRow .btn").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+
+      let last = performance.now();
+      function loop(now) {
+        const dt = Math.min((now - last) / 1000, 1 / 30);
+        last = now;
+        msgT = Math.max(0, msgT - dt);
+        if (charging) aim.power = Math.min(1, aim.power + dt * 0.8);
+        if (state === "rolling" && !physics(dt)) endShot();
+        draw();
+        requestAnimationFrame(loop);
+      }
+      document.addEventListener("visibilitychange", () => { last = performance.now(); });
+      const resize = () => fitCanvas(canvas, ctx, wrap, W, H);
+      window.addEventListener("resize", resize);
+      setMode(mode);
+      resize();
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>

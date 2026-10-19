@@ -380,6 +380,7 @@
 
     if (state === "ready") {
       text("Flappy Bird", W / 2, 140, 44, "#ffd23f");
+      text("Game Zone by Shubham Goyal", W / 2, 182, 16, "#fff");
       const pulse = 1 + Math.sin(time * 5) * 0.05;
       ctx.save();
       ctx.translate(W / 2, 400);

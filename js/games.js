@@ -4,6 +4,14 @@
 const GAMES = [
   { title: "Car Racing", desc: "Highway par traffic se bacho, brake lagao, coins uthao!", url: "games/car/index.html", emoji: "🏎️", color: "linear-gradient(135deg, #ef4444, #7f1d1d)", twoPlayer: true, cat: "action" },
   { title: "Bike Racing", desc: "3D sadak, mod aur pahaad. Time khatam hone se pehle checkpoint!", url: "games/bike/index.html", emoji: "🏍️", color: "linear-gradient(135deg, #0ea5e9, #1e3a8a)", cat: "action" },
+  { title: "Hill Climb", desc: "Pahaadi raaste par gaadi chalao, petrol khatam na ho!", url: "games/hillclimb/index.html", emoji: "🚙", color: "linear-gradient(135deg, #38bdf8, #92400e)", isNew: true, cat: "action" },
+  { title: "Endless Runner", desc: "Bhaago, kudo, slide karo — kitni door jaa sakte ho?", url: "games/runner/index.html", emoji: "🏃", color: "linear-gradient(135deg, #be185d, #1e1b4b)", isNew: true, cat: "action" },
+  { title: "Fruit Slice", desc: "Ungli se fruits kaato, bomb se bacho!", url: "games/fruit/index.html", emoji: "🍉", color: "linear-gradient(135deg, #f43f5e, #7c4a24)", isNew: true, cat: "action" },
+  { title: "Cooking Rush", desc: "Burger banao, grill sambhalo, customers khush karo!", url: "games/cooking/index.html", emoji: "🍔", color: "linear-gradient(135deg, #f59e0b, #3b1d0e)", isNew: true, cat: "action" },
+  { title: "Mini Pool", desc: "8-ball pool — dost ke saath ya akele practice", url: "games/pool/index.html", emoji: "🎱", color: "linear-gradient(135deg, #15803d, #14532d)", twoPlayer: true, isNew: true, cat: "classic" },
+  { title: "Math Quiz", desc: "Tez dimaag! Solo 60 sec ya dost se race", url: "games/math/index.html", emoji: "➗", color: "linear-gradient(135deg, #0ea5e9, #6d28d9)", twoPlayer: true, isNew: true, cat: "puzzle" },
+  { title: "Rope Cut", desc: "Rassi kaato, candy Chomu tak pahunchao — 8 levels", url: "games/rope/index.html", emoji: "🍬", color: "linear-gradient(135deg, #c9a26b, #65a30d)", isNew: true, cat: "puzzle" },
+  { title: "Bubble Shooter", desc: "Nishana lagao, 3 same rang ke bubble phodo", url: "games/bubble/index.html", emoji: "🫧", color: "linear-gradient(135deg, #3b82f6, #0c4a6e)", isNew: true, cat: "puzzle" },
   { title: "Zombie Survival", desc: "Zombies ki waves se bacho, power-ups uthao!", url: "games/zombie/index.html", emoji: "🧟", color: "linear-gradient(135deg, #4d7c0f, #1a2e05)", cat: "action" },
   { title: "Tank Battle", desc: "Goliyaan deewar se lautti hain! Computer ya dost se ladho", url: "games/tank/index.html", emoji: "🪖", color: "linear-gradient(135deg, #a16207, #422006)", twoPlayer: true, cat: "action" },
   { title: "Traffic Dodge", desc: "Murgi ko sadak, nadi aur railway paar karao!", url: "games/dodge/index.html", emoji: "🐔", color: "linear-gradient(135deg, #84cc16, #3f6212)", cat: "action" },
@@ -27,47 +35,3 @@ const GAMES = [
   { title: "Rock Paper Scissors", desc: "Computer ya dost ko haraa sakte ho?", url: "games/rps/index.html", emoji: "✊✋✌️", color: "linear-gradient(135deg, #ff7a59, #c2412a)", twoPlayer: true, cat: "classic" },
 ];
 
-function matches(g, filter, q) {
-  if (filter === "2p" && !g.twoPlayer) return false;
-  if (["action", "puzzle", "classic"].includes(filter) && g.cat !== filter) return false;
-  if (q && !(g.title + " " + g.desc).toLowerCase().includes(q)) return false;
-  return true;
-}
-
-function renderGames() {
-  const grid = document.getElementById("game-grid");
-  const q = document.getElementById("search").value.trim().toLowerCase();
-  const list = GAMES.filter((g) => matches(g, currentFilter, q));
-  grid.innerHTML = list.length
-    ? list.map((g) => `
-    <a class="card" href="${g.url}">
-      <div class="thumb" style="background:${g.color}">
-        ${g.twoPlayer ? '<span class="badge">👥 2 Player</span>' : ""}
-        ${g.emoji}
-      </div>
-      <div class="info">
-        <h3>${g.title}</h3>
-        <p>${g.desc}</p>
-        <span class="play">▶ Play</span>
-      </div>
-    </a>`).join("")
-    : `<p class="empty">Koi game nahi mila 😕</p>`;
-  document.getElementById("game-count").textContent = `${list.length} games`;
-}
-
-let currentFilter = "all";
-try { currentFilter = localStorage.getItem("gamezone_filter") || "all"; } catch { /* ignore */ }
-if (!document.querySelector(`.filter[data-filter="${currentFilter}"]`)) currentFilter = "all";
-
-document.querySelectorAll(".filter").forEach((btn) => {
-  btn.classList.toggle("active", btn.dataset.filter === currentFilter);
-  btn.addEventListener("click", () => {
-    currentFilter = btn.dataset.filter;
-    try { localStorage.setItem("gamezone_filter", currentFilter); } catch { /* ignore */ }
-    document.querySelectorAll(".filter").forEach((b) => b.classList.toggle("active", b === btn));
-    renderGames();
-  });
-});
-document.getElementById("search").addEventListener("input", renderGames);
-
-renderGames();

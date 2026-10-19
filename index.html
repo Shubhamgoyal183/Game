@@ -16,43 +16,55 @@
 </head>
 <body>
   <header class="site-header">
-    <a href="index.html" class="logo">🎮 Game <span>Zone</span></a>
-    <span class="byline">by Shubham Goyal</span>
+    <a href="index.html" class="logo">
+      <img src="icons/icon-192.png" alt="" width="38" height="38">
+      <span class="logo-text"><b>Game <span>Zone</span></b><small>by Shubham Goyal</small></span>
+    </a>
+    <label class="search">
+      <span aria-hidden="true">🔍</span>
+      <input type="search" id="search" placeholder="Game dhoondho..." autocomplete="off" aria-label="Game dhoondho">
+      <kbd>/</kbd>
+    </label>
   </header>
 
-  <main>
+  <main class="wrap">
     <section class="hero">
-      <h1>Game <span class="hl">Zone</span></h1>
-      <p class="hero-by">by Shubham Goyal</p>
-      <p>Free games, bina internet ke bhi. Mobile ya laptop, kahin bhi khelo!</p>
-      <div class="get-app" id="getApp">
-        <a class="app-btn apk" id="apkBtn" href="download/GameZone.apk" download hidden>⬇️ Android APK Download</a>
-        <button class="app-btn install" id="installBtn" hidden>📲 App Install karo</button>
+      <div class="spot" id="spot"></div>
+      <div class="hero-side">
+        <div class="stats">
+          <div><b id="statGames">0</b><span>Games</span></div>
+          <div><b id="stat2p">0</b><span>2 Player</span></div>
+          <div><b>100%</b><span>Offline</span></div>
+        </div>
+        <div class="get-app" id="getApp">
+          <a class="app-btn apk" id="apkBtn" href="download/GameZone.apk" download hidden>⬇️ Android APK</a>
+          <button class="app-btn install" id="installBtn" hidden>📲 App Install karo</button>
+        </div>
+        <p class="app-note" id="appNote">Free games · koi login nahi · bina internet ke bhi chalte hain</p>
       </div>
-      <p class="app-note" id="appNote"></p>
     </section>
 
-    <section class="games">
-      <div class="games-head">
-        <div class="filters">
-          <button class="filter" data-filter="all">🎮 Saare</button>
-          <button class="filter" data-filter="2p">👥 2 Player</button>
-          <button class="filter" data-filter="action">🏃 Action</button>
-          <button class="filter" data-filter="puzzle">🧠 Puzzle</button>
-          <button class="filter" data-filter="classic">🎲 Classic</button>
-        </div>
-        <div class="search-wrap">
-          <input type="search" id="search" placeholder="🔍 Game dhoondho..." autocomplete="off">
-          <span class="count" id="game-count"></span>
-        </div>
-      </div>
-      <div class="grid" id="game-grid"></div>
-    </section>
+    <nav class="tabs" id="tabs" aria-label="Categories">
+      <button class="tab" data-filter="all">🎮 Saare <b></b></button>
+      <button class="tab" data-filter="new">🆕 Naye <b></b></button>
+      <button class="tab" data-filter="2p">👥 2 Player <b></b></button>
+      <button class="tab" data-filter="action">🏃 Action <b></b></button>
+      <button class="tab" data-filter="puzzle">🧠 Puzzle <b></b></button>
+      <button class="tab" data-filter="classic">🎲 Classic <b></b></button>
+      <button class="tab" data-filter="fav">❤️ Favourites <b></b></button>
+    </nav>
+
+    <div id="content"></div>
   </main>
 
-  <footer class="site-footer">© 2026 Game Zone by Shubham Goyal</footer>
+  <footer class="site-footer">
+    <img src="icons/icon-192.png" alt="" width="44" height="44">
+    <div><b>Game Zone</b> by Shubham Goyal</div>
+    <small>Mobile + Laptop · Bina internet ke · © 2026</small>
+  </footer>
 
   <script src="js/games.js"></script>
+  <script src="js/home.js"></script>
   <script>
     // App install / APK download buttons
     (() => {
@@ -88,7 +100,7 @@
         install.hidden = true;
         note.textContent = "✅ App install ho gaya! Ab home screen se bina net ke khelo.";
       });
-      if (isIOS) note.textContent = "iPhone par: Share ⬆️ dabao → 'Add to Home Screen'. Phir bina net ke chalega.";
+      if (isIOS) note.textContent = "📱 iPhone: Share ⬆️ → 'Add to Home Screen' — phir bina net ke chalega.";
     })();
   </script>
 </body>

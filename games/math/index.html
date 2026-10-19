@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Math Quiz – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+  <style>
+    body { user-select: none; -webkit-user-select: none; }
+    .q { font-size: clamp(2.4rem, 12vw, 3.6rem); font-weight: 800; text-align: center; letter-spacing: 1px; }
+    .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; max-width: 440px; }
+    .opt {
+      background: var(--card); border: 2px solid rgba(255,255,255,0.1); color: var(--text); border-radius: 16px;
+      font: 800 clamp(1.4rem, 7vw, 2rem) "Segoe UI", sans-serif; padding: 16px 0; cursor: pointer; position: relative; touch-action: manipulation;
+    }
+    .opt:active { transform: scale(0.96); }
+    .opt.right { background: #16a34a; border-color: #4ade80; }
+    .opt.wrong { background: #b91c1c; border-color: #f87171; }
+    .opt .k { position: absolute; top: 4px; left: 8px; font-size: 0.7rem; opacity: 0.5; }
+    .timebar { height: 10px; width: 100%; max-width: 440px; background: rgba(0,0,0,0.4); border-radius: 999px; overflow: hidden; }
+    .timebar div { height: 100%; background: linear-gradient(90deg, #22c55e, #facc15); }
+    .streak { color: #fbbf24; font-weight: 700; min-height: 1.4em; }
+
+    #duel { position: fixed; inset: 0; z-index: 40; background: #0f1020; display: none; flex-direction: column; }
+    #duel.show { display: flex; }
+    .half { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 12px; }
+    .half.p1h { border-top: 3px solid var(--accent-2); }
+    .half.p2h { border-bottom: 3px solid var(--accent); }
+    .half .q { font-size: clamp(1.8rem, 9vw, 2.8rem); }
+    .half .opt { padding: 10px 0; font-size: clamp(1.2rem, 6vw, 1.7rem); }
+    .half .sc { font-weight: 800; font-size: 1.1rem; }
+    .half.locked .opts { opacity: 0.35; pointer-events: none; }
+    @media (orientation: portrait) { .half.p2h { transform: rotate(180deg); } }
+    @media (orientation: landscape) {
+      #duel { flex-direction: row; }
+      .half.p1h { border-top: none; border-left: 3px solid var(--accent-2); }
+      .half.p2h { border-bottom: none; border-right: 3px solid var(--accent); }
+    }
+    .duel-exit { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 2; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>➗ Math Quiz</h1>
+    <span class="spacer"></span>
+  </header>
+  <main class="stage">
+    <div class="row">
+      <button class="btn small active" id="soloBtn">👤 Solo (60 sec)</button>
+      <button class="btn small" id="duelBtn">👥 2 Players race</button>
+    </div>
+    <div class="panel scores">
+      <div><div class="label">Score</div><div class="value" id="score">0</div></div>
+      <div><div class="label">Time</div><div class="value" id="time">60</div></div>
+      <div><div class="label">Best</div><div class="value" id="best">0</div></div>
+    </div>
+    <div class="timebar"><div id="bar" style="width:100%"></div></div>
+    <div class="q" id="q">Ready?</div>
+    <div class="streak" id="streak"></div>
+    <div class="opts" id="opts"></div>
+    <button class="btn primary" id="startBtn">▶ Start</button>
+    <div class="hint" id="hint">Sahi jawab = +1 aur +1 second · Galat = −3 second · Keyboard: 1 2 3 4</div>
+  </main>
+
+  <div id="duel">
+    <div class="half p2h" id="h2"></div>
+    <div class="half p1h" id="h1"></div>
+    <button class="btn small duel-exit" id="exitBtn">✕</button>
+  </div>
+
+  <div class="modal" id="modal">
+    <div class="panel">
+      <h2 id="mTitle"></h2>
+      <p id="mText"></p>
+      <button class="btn primary" id="mBtn"></button>
+    </div>
+  </div>
+
+  <p class="credit">Game Zone by Shubham Goyal</p>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const $ = (id) => document.getElementById(id);
+      const rnd = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+      if (IS_TOUCH) $("hint").textContent = "Sahi jawab = +1 aur +1 second · Galat = −3 second";
+
+      // ---------- Sawaal banao (level ke hisaab se mushkil) ----------
+      function question(level) {
+        const ops = level < 2 ? ["+", "−"] : level < 4 ? ["+", "−", "×"] : ["+", "−", "×", "÷"];
+        const op = ops[rnd(0, ops.length - 1)];
+        const big = 10 + level * 12;
+        let a, b, ans;
+        if (op === "+") { a = rnd(2, big); b = rnd(2, big); ans = a + b; }
+        else if (op === "−") { a = rnd(5, big + 10); b = rnd(1, a); ans = a - b; }
+        else if (op === "×") { a = rnd(2, 5 + level * 2); b = rnd(2, 10); ans = a * b; }
+        else { b = rnd(2, 9 + level); ans = rnd(2, 12); a = b * ans; }
+        const opts = new Set([ans]);
+        while (opts.size < 4) {
+          const d = rnd(1, Math.max(3, Math.round(ans * 0.2) + 2)) * (Math.random() < 0.5 ? -1 : 1);
+          if (ans + d >= 0) opts.add(ans + d);
+        }
+        return { text: `${a} ${op} ${b}`, ans, opts: [...opts].sort(() => Math.random() - 0.5) };
+      }
+
+      // ================= SOLO =================
+      let score = 0, timeLeft = 60, running = false, cur, streak = 0, timer, best = store.get("math_best", 0);
+      $("best").textContent = best;
+
+      function renderOpts() {
+        $("opts").innerHTML = cur.opts.map((o, i) => `<button class="opt" data-v="${o}">${IS_TOUCH ? "" : `<span class="k">${i + 1}</span>`}${o}</button>`).join("");
+        document.querySelectorAll("#opts .opt").forEach((b) => b.addEventListener("click", () => answer(+b.dataset.v, b)));
+      }
+
+      function next() {
+        cur = question(Math.floor(score / 5));
+        $("q").textContent = cur.text + " = ?";
+        renderOpts();
+      }
+
+      function answer(v, btn) {
+        if (!running || cur.done) return;
+        cur.done = true;
+        const ok = v === cur.ans;
+        btn.classList.add(ok ? "right" : "wrong");
+        if (ok) {
+          score++;
+          streak++;
+          timeLeft += 1;
+          sound.beep(700 + Math.min(streak, 10) * 40, 0.08, "sine", 0.06);
+        } else {
+          streak = 0;
+          timeLeft -= 3;
+          sound.beep(180, 0.15, "square", 0.05);
+          document.querySelectorAll("#opts .opt").forEach((b) => +b.dataset.v === cur.ans && b.classList.add("right"));
+        }
+        $("score").textContent = score;
+        $("streak").textContent = streak >= 3 ? `🔥 ${streak} lagataar sahi!` : "";
+        setTimeout(next, ok ? 250 : 700);
+      }
+
+      function startSolo() {
+        sound.unlock();
+        score = 0; timeLeft = 60; streak = 0; running = true;
+        $("score").textContent = 0;
+        $("startBtn").style.display = "none";
+        hideModal();
+        next();
+        clearInterval(timer);
+        const t0 = performance.now();
+        let last = t0;
+        timer = setInterval(() => {
+          const now = performance.now();
+          timeLeft -= (now - last) / 1000;
+          last = now;
+          $("time").textContent = Math.max(0, Math.ceil(timeLeft));
+          $("bar").style.width = Math.max(0, Math.min(100, (timeLeft / 60) * 100)) + "%";
+          if (timeLeft <= 0) endSolo();
+        }, 100);
+      }
+
+      function endSolo() {
+        running = false;
+        clearInterval(timer);
+        const rec = score > best;
+        if (rec) { best = score; store.set("math_best", best); $("best").textContent = best; }
+        $("startBtn").style.display = "";
+        showModal(rec ? "🏆 Naya Record!" : "⏰ Time khatam!", `Aapne ${score} sawaal sahi kiye`, "Dobara khelo", startSolo);
+      }
+
+      $("startBtn").addEventListener("click", startSolo);
+
+      // ================= 2 PLAYER RACE =================
+      const WIN = 10;
+      let duel = null;
+
+      function duelRender() {
+        for (const p of [1, 2]) {
+          const keys = p === 2 ? ["1", "2", "3", "4"] : ["7", "8", "9", "0"];
+          const half = $("h" + p);
+          half.classList.toggle("locked", duel.lock[p] > performance.now());
+          half.innerHTML = `
+            <div class="sc ${p === 1 ? "p1" : "p2"}">Player ${p}: ${duel.pts[p]} / ${WIN}</div>
+            <div class="q">${duel.q.text} = ?</div>
+            <div class="opts">${duel.q.opts.map((o, i) => `<button class="opt" data-v="${o}">${IS_TOUCH ? "" : `<span class="k">${keys[i]}</span>`}${o}</button>`).join("")}</div>
+            <div class="streak">${duel.msg[p] || ""}</div>`;
+          half.querySelectorAll(".opt").forEach((b) => b.addEventListener("pointerdown", (e) => { e.preventDefault(); duelAnswer(p, +b.dataset.v); }));
+        }
+      }
+
+      function duelNext() {
+        duel.q = question(Math.min(5, Math.floor((duel.pts[1] + duel.pts[2]) / 4)));
+        duel.busy = false;
+        duelRender();
+      }
+
+      function duelAnswer(p, v) {
+        if (!duel || duel.busy || duel.lock[p] > performance.now()) return;
+        const o = p === 1 ? 2 : 1;
+        if (v === duel.q.ans) {
+          duel.busy = true;
+          duel.pts[p]++;
+          duel.msg = { [p]: "✅ Sahi! +1", [o]: `😅 Jawab tha ${duel.q.ans}` };
+          sound.beep(880, 0.1, "sine", 0.07);
+          duelRender();
+          if (duel.pts[p] >= WIN) {
+            setTimeout(() => {
+              $("duel").classList.remove("show");
+              showModal(`🏆 Player ${p} jeeta!`, `Player 1: ${duel.pts[1]} · Player 2: ${duel.pts[2]}`, "Naya match", startDuel);
+            }, 700);
+            return;
+          }
+          setTimeout(() => { duel.msg = {}; duelNext(); }, 900);
+        } else {
+          duel.lock[p] = performance.now() + 1500; // galat = 1.5 sec ruko
+          duel.msg[p] = "❌ Galat! 1.5 sec ruko";
+          sound.beep(160, 0.15, "square", 0.05);
+          duelRender();
+          setTimeout(() => { if (duel && !duel.busy) { duel.msg[p] = ""; duelRender(); } }, 1550);
+        }
+      }
+
+      function startDuel() {
+        sound.unlock();
+        running = false;
+        clearInterval(timer);
+        hideModal();
+        duel = { pts: { 1: 0, 2: 0 }, lock: { 1: 0, 2: 0 }, msg: {}, busy: false };
+        $("duel").classList.add("show");
+        duelNext();
+      }
+
+      $("duelBtn").addEventListener("click", () => { $("duelBtn").blur(); startDuel(); });
+      $("exitBtn").addEventListener("click", () => { duel = null; $("duel").classList.remove("show"); });
+
+      window.addEventListener("keydown", (e) => {
+        if (duel && $("duel").classList.contains("show")) {
+          const k2 = ["1", "2", "3", "4"].indexOf(e.key), k1 = ["7", "8", "9", "0"].indexOf(e.key);
+          if (k2 >= 0) duelAnswer(2, duel.q.opts[k2]);
+          if (k1 >= 0) duelAnswer(1, duel.q.opts[k1]);
+          if (e.key === "Escape") $("exitBtn").click();
+          return;
+        }
+        const n = ["1", "2", "3", "4"].indexOf(e.key);
+        if (n >= 0 && running && cur) answer(cur.opts[n], document.querySelectorAll("#opts .opt")[n]);
+        if ((e.code === "Enter" || e.code === "Space") && !running && !$("modal").classList.contains("show")) { e.preventDefault(); startSolo(); }
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <script src="../../js/pwa.js" defer></script>
+  <title>Bubble Shooter – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+</head>
+<body class="fullscreen">
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🫧 Bubble Shooter</h1>
+    <span class="spacer"></span>
+  </header>
+  <main class="stage">
+    <div class="canvas-wrap" id="wrap"><canvas id="game"></canvas></div>
+    <div class="hint" id="hint">Mouse se nishana, click = fire · Neeche wale bubble par click = badlo · 3+ same rang milao</div>
+  </main>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const W = 480, H = 720, R = 20, COLS = 12, ROWH = R * Math.sqrt(3), TOP = 50;
+      const SX = W / 2, SY = H - 70, SPEED = 950, DANGER = SY - 70;
+      const COLORS = ["#ef4444", "#3b82f6", "#22c55e", "#facc15", "#a855f7", "#f97316"];
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const wrap = document.getElementById("wrap");
+      if (IS_TOUCH) document.getElementById("hint").textContent = "Ungli se nishana lagao, chhodo = fire · Neeche wale bubble par tap = badlo";
+
+      let grid, parity, shot, cur, next, aim, score, level, shots, falling, popping, state, best, nColors, newRecord;
+      best = store.get("bubble_best", 0);
+      level = 1;
+
+      const shifted = (r) => ((r + parity) & 1) === 1;
+      const colsIn = (r) => (shifted(r) ? COLS - 1 : COLS);
+      const pos = (r, c) => ({ x: R + c * 2 * R + (shifted(r) ? R : 0), y: TOP + R + r * ROWH });
+
+      function neighbors(r, c) {
+        const s = shifted(r);
+        const d = s ? [[-1, 0], [-1, 1], [0, -1], [0, 1], [1, 0], [1, 1]] : [[-1, -1], [-1, 0], [0, -1], [0, 1], [1, -1], [1, 0]];
+        return d.map(([dr, dc]) => [r + dr, c + dc]).filter(([rr, cc]) => rr >= 0 && cc >= 0 && cc < colsIn(rr));
+      }
+      const get = (r, c) => (grid[r] ? grid[r][c] : null);
+
+      function newLevel() {
+        parity = 0;
+        nColors = Math.min(6, 3 + Math.floor((level + 1) / 2));
+        const rows = Math.min(9, 4 + level);
+        grid = [];
+        for (let r = 0; r < rows; r++) grid.push(Array.from({ length: COLS }, (_, c) => (c < colsIn(r) ? Math.floor(Math.random() * nColors) : null)));
+        shots = 0;
+        shot = null;
+        falling = [];
+        popping = [];
+        cur = pickColor();
+        next = pickColor();
+        state = "play";
+      }
+
+      function reset() { level = 1; score = 0; newLevel(); state = "ready"; }
+
+      // Sirf woh rang do jo board par bache hain
+      function pickColor() {
+        const present = new Set();
+        for (const row of grid) for (const v of row) if (v !== null && v !== undefined) present.add(v);
+        const arr = present.size ? [...present] : [0, 1, 2];
+        return arr[Math.floor(Math.random() * arr.length)];
+      }
+
+      // ---------- Shooting ----------
+      function fire() {
+        if (state !== "play" || shot || !aim) return;
+        const a = aim.a;
+        shot = { x: SX, y: SY, vx: Math.cos(a) * SPEED, vy: Math.sin(a) * SPEED, color: cur };
+        cur = next;
+        next = pickColor();
+        sound.beep(500, 0.08, "triangle", 0.05, 800);
+      }
+
+      function snap() {
+        // Goli jahan ruki, uske sabse paas khaali jagah dhoondho
+        let r = Math.max(0, Math.round((shot.y - TOP - R) / ROWH));
+        while (grid.length <= r + 1) grid.push(Array(COLS).fill(null));
+        let best = null, bd = 1e9;
+        for (let rr = Math.max(0, r - 1); rr <= r + 1; rr++)
+          for (let cc = 0; cc < colsIn(rr); cc++) {
+            if (get(rr, cc) !== null && get(rr, cc) !== undefined) continue;
+            const p = pos(rr, cc);
+            const d = Math.hypot(p.x - shot.x, p.y - shot.y);
+            if (d < bd) { bd = d; best = [rr, cc]; }
+          }
+        const [br, bc] = best;
+        grid[br][bc] = shot.color;
+        const color = shot.color;
+        shot = null;
+        shots++;
+        resolve(br, bc, color);
+      }
+
+      function resolve(r, c, color) {
+        // Same rang ka jhund
+        const key = (a, b) => a + "," + b;
+        const seen = new Set([key(r, c)]), group = [[r, c]];
+        for (let i = 0; i < group.length; i++)
+          for (const [nr, nc] of neighbors(...group[i])) {
+            if (seen.has(key(nr, nc)) || get(nr, nc) !== color) continue;
+            seen.add(key(nr, nc));
+            group.push([nr, nc]);
+          }
+        if (group.length >= 3) {
+          for (const [gr, gc] of group) {
+            popping.push({ ...pos(gr, gc), color: grid[gr][gc], t: 0 });
+            grid[gr][gc] = null;
+          }
+          score += group.length * 10;
+          sound.beep(600 + group.length * 40, 0.12, "sine", 0.07, 1200);
+          dropFloating();
+        } else {
+          sound.beep(300, 0.05, "square", 0.03);
+          // Har 6 bekaar shot ke baad upar se nayi line aati hai
+          if (shots % 6 === 0) addRow();
+        }
+        while (grid.length && grid[grid.length - 1].every((v) => v === null || v === undefined)) grid.pop();
+        checkEnd();
+      }
+
+      function dropFloating() {
+        const key = (a, b) => a + "," + b;
+        const seen = new Set(), q = [];
+        if (grid[0]) for (let c = 0; c < colsIn(0); c++) if (grid[0][c] !== null && grid[0][c] !== undefined) { seen.add(key(0, c)); q.push([0, c]); }
+        for (let i = 0; i < q.length; i++)
+          for (const [nr, nc] of neighbors(...q[i])) {
+            const v = get(nr, nc);
+            if (v === null || v === undefined || seen.has(key(nr, nc))) continue;
+            seen.add(key(nr, nc));
+            q.push([nr, nc]);
+          }
+        let dropped = 0;
+        grid.forEach((row, r) => row.forEach((v, c) => {
+          if (v === null || v === undefined || seen.has(key(r, c))) return;
+          falling.push({ ...pos(r, c), color: v, vx: (Math.random() - 0.5) * 120, vy: -Math.random() * 100 });
+          grid[r][c] = null;
+          dropped++;
+        }));
+        if (dropped) {
+          score += dropped * 20;
+          sound.beep(900, 0.2, "sine", 0.06, 300);
+        }
+      }
+
+      function addRow() {
+        parity ^= 1;
+        grid.unshift(Array.from({ length: COLS }, (_, c) => (c < colsIn(0) ? Math.floor(Math.random() * nColors) : null)));
+        sound.beep(150, 0.2, "sawtooth", 0.04);
+      }
+
+      function checkEnd() {
+        const any = grid.some((row) => row.some((v) => v !== null && v !== undefined));
+        if (!any) {
+          state = "won";
+          score += 200 + level * 50;
+          [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => sound.beep(f, 0.15, "sine", 0.07), i * 110));
+          return;
+        }
+        for (let r = 0; r < grid.length; r++)
+          if (grid[r].some((v) => v !== null && v !== undefined) && pos(r, 0).y + R > DANGER) {
+            state = "over";
+            newRecord = score > best;
+            if (newRecord) { best = score; store.set("bubble_best", best); }
+            sound.beep(150, 0.6, "sawtooth", 0.07, 50);
+            return;
+          }
+      }
+
+      // ---------- Update ----------
+      function update(dt) {
+        for (const f of falling) { f.x += f.vx * dt; f.y += f.vy * dt; f.vy += 1500 * dt; }
+        falling = falling.filter((f) => f.y < H + 40);
+        for (const p of popping) p.t += dt * 5;
+        popping = popping.filter((p) => p.t < 1);
+        if (!shot) return;
+        const steps = 6;
+        for (let i = 0; i < steps && shot; i++) {
+          const h = dt / steps;
+          shot.x += shot.vx * h;
+          shot.y += shot.vy * h;
+          if (shot.x < R) { shot.x = R; shot.vx = Math.abs(shot.vx); sound.beep(800, 0.02, "square", 0.02); }
+          if (shot.x > W - R) { shot.x = W - R; shot.vx = -Math.abs(shot.vx); sound.beep(800, 0.02, "square", 0.02); }
+          if (shot.y < TOP + R) { shot.y = TOP + R; return snap(); }
+          for (let r = 0; r < grid.length; r++)
+            for (let c = 0; c < colsIn(r); c++) {
+              if (grid[r][c] === null || grid[r][c] === undefined) continue;
+              const p = pos(r, c);
+              if ((p.x - shot.x) ** 2 + (p.y - shot.y) ** 2 < (R * 1.75) ** 2) return snap();
+            }
+        }
+      }
+
+      // ---------- Draw ----------
+      function bubble(x, y, color, rad = R - 1) {
+        const g = ctx.createRadialGradient(x - rad * 0.35, y - rad * 0.4, rad * 0.1, x, y, rad);
+        g.addColorStop(0, "#ffffff");
+        g.addColorStop(0.25, COLORS[color]);
+        g.addColorStop(1, COLORS[color]);
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = "rgba(0,0,0,0.25)";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+
+      function aimPath() {
+        // Deewar se ek bounce tak dotted line
+        let x = SX, y = SY, vx = Math.cos(aim.a), vy = Math.sin(aim.a), pts = [];
+        for (let i = 0; i < 70; i++) {
+          x += vx * 9; y += vy * 9;
+          if (x < R || x > W - R) vx = -vx;
+          if (y < TOP + R) break;
+          let hit = false;
+          for (let r = 0; r < grid.length && !hit; r++)
+            for (let c = 0; c < colsIn(r); c++) {
+              if (grid[r][c] === null || grid[r][c] === undefined) continue;
+              const p = pos(r, c);
+              if ((p.x - x) ** 2 + (p.y - y) ** 2 < (R * 1.75) ** 2) { hit = true; break; }
+            }
+          if (hit) break;
+          if (i % 3 === 0) pts.push([x, y]);
+        }
+        return pts;
+      }
+
+      function text(s, x, y, size, color) {
+        ctx.font = `800 ${size}px "Segoe UI", sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.lineJoin = "round";
+        ctx.lineWidth = size / 4;
+        ctx.strokeStyle = "rgba(0,0,0,0.7)";
+        ctx.strokeText(s, x, y);
+        ctx.fillStyle = color;
+        ctx.fillText(s, x, y);
+      }
+
+      function draw() {
+        const g = ctx.createLinearGradient(0, 0, 0, H);
+        g.addColorStop(0, "#1e3a8a");
+        g.addColorStop(1, "#0c4a6e");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.fillRect(0, 0, W, TOP);
+        text(`Score ${score}`, 90, 26, 20, "#fff");
+        text(`Level ${level}`, W / 2, 26, 18, "#fde68a");
+        text(`Best ${best}`, W - 80, 26, 16, "#cbd5e1");
+        // Khatre ki line
+        ctx.strokeStyle = "rgba(239,68,68,0.5)";
+        ctx.setLineDash([8, 8]);
+        ctx.beginPath(); ctx.moveTo(0, DANGER); ctx.lineTo(W, DANGER); ctx.stroke();
+        ctx.setLineDash([]);
+
+        grid.forEach((row, r) => row.forEach((v, c) => { if (v !== null && v !== undefined) { const p = pos(r, c); bubble(p.x, p.y, v); } }));
+        for (const p of popping) { ctx.globalAlpha = 1 - p.t; bubble(p.x, p.y, p.color, (R - 1) * (1 + p.t * 0.6)); }
+        ctx.globalAlpha = 1;
+        for (const f of falling) bubble(f.x, f.y, f.color);
+
+        if (aim && state === "play" && !shot) {
+          ctx.fillStyle = "rgba(255,255,255,0.7)";
+          for (const [x, y] of aimPath()) { ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill(); }
+        }
+        // Shooter
+        ctx.save();
+        ctx.translate(SX, SY);
+        ctx.rotate((aim ? aim.a : -Math.PI / 2) + Math.PI / 2);
+        ctx.fillStyle = "#94a3b8";
+        ctx.fillRect(-7, -46, 14, 34);
+        ctx.restore();
+        ctx.fillStyle = "#334155";
+        ctx.beginPath(); ctx.arc(SX, SY, 28, 0, Math.PI * 2); ctx.fill();
+        if (!shot) bubble(SX, SY, cur);
+        else bubble(shot.x, shot.y, shot.color);
+        // Agla bubble (tap = badlo)
+        bubble(SX - 80, SY + 20, next, R - 5);
+        ctx.fillStyle = "#cbd5e1";
+        ctx.font = '600 12px "Segoe UI", sans-serif';
+        ctx.textAlign = "center";
+        ctx.fillText("🔄 agla", SX - 80, SY + 52);
+
+        if (state === "ready") {
+          ctx.fillStyle = "rgba(0,0,0,0.5)";
+          ctx.fillRect(0, 0, W, H);
+          text("🫧 Bubble Shooter", W / 2, H * 0.38, 40, "#fff");
+          text("Game Zone by Shubham Goyal", W / 2, H * 0.44, 15, "#e5e7eb");
+          text(IS_TOUCH ? "Tap karke shuru karo" : "Click karke shuru karo", W / 2, H * 0.5, 20, "#fde68a");
+        }
+        if (state === "won") {
+          ctx.fillStyle = "rgba(0,0,0,0.5)";
+          ctx.fillRect(0, 0, W, H);
+          text(`🎉 Level ${level} saaf!`, W / 2, H * 0.4, 38, "#fff");
+          text(`Score ${score}`, W / 2, H * 0.47, 22, "#fde68a");
+          text("Tap = agla level", W / 2, H * 0.53, 18, "#cbd5e1");
+        }
+        if (state === "over") {
+          ctx.fillStyle = "rgba(60,0,0,0.6)";
+          ctx.fillRect(0, 0, W, H);
+          text(newRecord ? "🏆 Naya Record!" : "😵 Bubbles neeche aa gaye!", W / 2, H * 0.4, 32, "#fff");
+          text(`Score ${score} · Best ${best}`, W / 2, H * 0.47, 22, "#fde68a");
+          text("Tap = dobara", W / 2, H * 0.53, 18, "#cbd5e1");
+        }
+      }
+
+      // ---------- Input ----------
+      function setAim(p) {
+        let a = Math.atan2(p.y - SY, p.x - SX);
+        // Neeche ki taraf nishana nahi
+        if (a > -0.15) a = a > Math.PI / 2 ? -Math.PI + 0.15 : -0.15;
+        a = Math.max(-Math.PI + 0.15, Math.min(-0.15, a));
+        aim = { a };
+      }
+      let touching = false;
+      canvas.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        sound.unlock();
+        const p = canvasPoint(canvas, e, W, H);
+        if (state === "ready") { state = "play"; return; }
+        if (state === "won") { level++; newLevel(); return; }
+        if (state === "over") { reset(); state = "play"; return; }
+        if (Math.hypot(p.x - (SX - 80), p.y - (SY + 20)) < 28) { [cur, next] = [next, cur]; sound.beep(400, 0.05, "triangle", 0.04); return; }
+        setAim(p);
+        if (e.pointerType === "mouse") fire();
+        else { touching = true; canvas.setPointerCapture(e.pointerId); }
+      });
+      canvas.addEventListener("pointermove", (e) => {
+        if (e.pointerType === "mouse" || touching) setAim(canvasPoint(canvas, e, W, H));
+      });
+      canvas.addEventListener("pointerup", (e) => {
+        if (touching) { touching = false; fire(); }
+      });
+      window.addEventListener("keydown", (e) => {
+        if (state !== "play") return;
+        if (!aim) aim = { a: -Math.PI / 2 };
+        if (e.code === "ArrowLeft") aim.a = Math.max(-Math.PI + 0.15, aim.a - 0.05);
+        if (e.code === "ArrowRight") aim.a = Math.min(-0.15, aim.a + 0.05);
+        if (e.code === "Space" || e.code === "ArrowUp") { e.preventDefault(); fire(); }
+        if (e.code === "KeyS" || e.code === "ArrowDown") [cur, next] = [next, cur];
+      });
+
+      let last = performance.now();
+      function loop(now) {
+        const dt = Math.min((now - last) / 1000, 1 / 30);
+        last = now;
+        update(dt);
+        draw();
+        requestAnimationFrame(loop);
+      }
+      document.addEventListener("visibilitychange", () => { last = performance.now(); });
+      const resize = () => fitCanvas(canvas, ctx, wrap, W, H);
+      window.addEventListener("resize", resize);
+      resize();
+      reset();
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>
