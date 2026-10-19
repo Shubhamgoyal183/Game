@@ -31,13 +31,14 @@
   <script src="../../js/common.js"></script>
   <script>
     (() => {
-      const W = 800, H = 450, GROUND = 395;
+      // Size screen ke hisaab se: phone seedha = lamba aasmaan, laptop = chauda maidan
+      let W = 800, H = 450, GROUND = 395;
       const BOW = { x: 120, y: 300 };
       const GRAV = 480, ARROWS = 5, RING = 6, T_R = 60;
       const canvas = document.getElementById("game");
       const ctx = canvas.getContext("2d");
       const wrap = document.getElementById("wrap");
-      if (IS_TOUCH) document.getElementById("hint").textContent = "Screen par ungli rakh ke peeche kheencho aur chhodo · Phone aada (landscape) karke khelo";
+      if (IS_TOUCH) document.getElementById("hint").textContent = "Screen par ungli rakh ke peeche kheencho aur chhodo";
 
       let mode = store.get("arch_mode", "1p");
       let best = store.get("arch_best", 0);
@@ -46,8 +47,8 @@
       function newTarget() {
         const moving = shotNo >= 2; // teesre round se nishana hilta hai
         target = {
-          x: 540 + Math.random() * 200,
-          baseY: 190 + Math.random() * 110,
+          x: W * 0.62 + Math.random() * W * 0.3,
+          baseY: Math.max(130, GROUND - 95 - Math.random() * (110 + (H - 450) * 0.45)),
           y: 0, t: Math.random() * 6,
           amp: moving ? 30 + Math.random() * 40 : 0,
         };
@@ -223,6 +224,8 @@
       const turnColor = () => (turn === 1 ? "#ef4444" : "#3b82f6");
 
       function drawArcher() {
+        ctx.save();
+        ctx.translate(0, GROUND - 395); // teerandaaz zameen ke saath
         const color = turnColor();
         const a = aim.angle;
         const pull = state === "aim" ? aim.power * 24 : 0;
@@ -231,8 +234,8 @@
         ctx.lineWidth = 6;
         ctx.lineCap = "round";
         ctx.beginPath();
-        ctx.moveTo(BOW.x - 30, GROUND); ctx.lineTo(BOW.x - 22, 345);
-        ctx.moveTo(BOW.x - 6, GROUND); ctx.lineTo(BOW.x - 18, 345);
+        ctx.moveTo(BOW.x - 30, 395); ctx.lineTo(BOW.x - 22, 345);
+        ctx.moveTo(BOW.x - 6, 395); ctx.lineTo(BOW.x - 18, 345);
         ctx.stroke();
         ctx.fillStyle = color;
         ctx.beginPath();
@@ -248,7 +251,7 @@
         ctx.save(); ctx.translate(BOW.x - 36, 300); ctx.rotate(-0.4); ctx.fillRect(-5, -28, 10, 36); ctx.restore();
 
         ctx.save();
-        ctx.translate(BOW.x, BOW.y);
+        ctx.translate(BOW.x, 300);
         ctx.rotate(a);
         // front arm
         ctx.strokeStyle = "#f5c08a";
@@ -264,7 +267,8 @@
         ctx.lineWidth = 1.5;
         ctx.beginPath(); ctx.moveTo(sx, -sy); ctx.lineTo(-pull - 6, 0); ctx.lineTo(sx, sy); ctx.stroke();
         ctx.restore();
-        if (state === "aim") drawArrow(BOW.x + Math.cos(a) * (30 - pull), BOW.y + Math.sin(a) * (30 - pull), a);
+        if (state === "aim") drawArrow(BOW.x + Math.cos(a) * (30 - pull), 300 + Math.sin(a) * (30 - pull), a);
+        ctx.restore();
       }
 
       function drawAimGuide() {
@@ -426,10 +430,16 @@
         requestAnimationFrame(loop);
       }
       document.addEventListener("visibilitychange", () => { last = performance.now(); });
-      const resize = () => fitCanvas(canvas, ctx, wrap, W, H);
+      function resize() {
+        ({ W, H } = fitCanvasFill(canvas, ctx, wrap, 560, 450, 900, 1000));
+        GROUND = H - 55;
+        BOW.y = GROUND - 95;
+        BOW.x = Math.min(120, W * 0.17);
+        if (target) target.baseY = Math.min(target.baseY, GROUND - 95);
+      }
       window.addEventListener("resize", resize);
-      setMode(mode);
       resize();
+      setMode(mode);
       requestAnimationFrame(loop);
     })();
   </script>

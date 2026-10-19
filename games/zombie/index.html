@@ -28,7 +28,7 @@
   <script src="../../js/common.js"></script>
   <script>
     (() => {
-      const W = 720, H = 720;
+      let W = 720, H = 720; // screen ke aakar ke hisaab se badalta hai
       const P_SPEED = 190, P_R = 14;
       const canvas = document.getElementById("game");
       const ctx = canvas.getContext("2d");
@@ -43,7 +43,7 @@
 
       let me, zombies, bullets, parts, decals, drops, wave, toSpawn, spawnT, breakT, score, best, state, shake, hurtT, kills, power, decor;
       best = store.get("zombie_best", 0);
-      decor = Array.from({ length: 50 }, () => ({ x: Math.random() * W, y: Math.random() * H, r: 6 + Math.random() * 16, k: Math.random() }));
+      const makeDecor = () => (decor = Array.from({ length: Math.round((W * H) / 10000) }, () => ({ x: Math.random() * W, y: Math.random() * H, r: 6 + Math.random() * 16, k: Math.random() })));
 
       function reset() {
         me = { x: W / 2, y: H / 2, hp: 100, a: 0, cd: 0, flash: 0 };
@@ -466,7 +466,11 @@
         last = performance.now();
         if (document.hidden && state === "play") state = "paused";
       });
-      const resize = () => fitCanvas(canvas, ctx, wrap, W, H);
+      function resize() {
+        ({ W, H } = fitCanvasFill(canvas, ctx, wrap, 640, 640, 1100, 1250));
+        makeDecor();
+        if (me) { me.x = Math.min(me.x, W - P_R); me.y = Math.min(me.y, H - P_R); }
+      }
       window.addEventListener("resize", resize);
       resize();
       reset();

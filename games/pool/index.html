@@ -32,6 +32,9 @@
   <script>
     (() => {
       const W = 800, H = 470, L = 50, T = 70, RR = 750, B = 430, R = 11;
+      // Phone seedha ho toh table khadi dikhti hai (physics wahi, sirf draw/touch ghumte hain)
+      let tall = false, SW = W, SH = H, worldPass = false;
+      const toWorld = (p) => (tall ? { x: W + 60 - p.y, y: p.x } : p);
       const CY = (T + B) / 2;
       const POCKETS = [
         { x: L - 2, y: T - 2, r: 24 }, { x: (L + RR) / 2, y: T - 7, r: 22 }, { x: RR + 2, y: T - 2, r: 24 },
@@ -42,7 +45,7 @@
       const canvas = document.getElementById("game");
       const ctx = canvas.getContext("2d");
       const wrap = document.getElementById("wrap");
-      if (IS_TOUCH) document.getElementById("hint").textContent = "Table par ungli rakho, ulta kheencho (gulel jaisa) aur chhodo · Phone aada karke khelo";
+      if (IS_TOUCH) document.getElementById("hint").textContent = "Table par ungli rakho, ulta kheencho (gulel jaisa) aur chhodo";
 
       let mode = store.get("pool_mode", "2p");
       let balls, turn, groups, moving, shotLog, aim, state, msg, msgT, shots, best;
@@ -286,7 +289,11 @@
           ctx.fillStyle = "#111";
           ctx.font = `800 ${r * 0.75}px "Segoe UI", sans-serif`;
           ctx.textAlign = "center"; ctx.textBaseline = "middle";
-          ctx.fillText(b.n, x, y + 0.5);
+          ctx.save();
+          ctx.translate(x, y + 0.5);
+          if (tall && worldPass) ctx.rotate(Math.PI / 2); // number seedha dikhe
+          ctx.fillText(b.n, 0, 0);
+          ctx.restore();
         }
         ctx.fillStyle = "rgba(255,255,255,0.5)";
         ctx.beginPath(); ctx.arc(x - r * 0.35, y - r * 0.4, r * 0.25, 0, Math.PI * 2); ctx.fill();
@@ -296,7 +303,7 @@
         ctx.textBaseline = "middle";
         if (mode === "2p") {
           for (const p of [1, 2]) {
-            const x = p === 1 ? 20 : W - 20, align = p === 1 ? "left" : "right";
+            const x = p === 1 ? 20 : SW - 20, align = p === 1 ? "left" : "right";
             ctx.textAlign = align;
             ctx.font = '800 16px "Segoe UI", sans-serif';
             ctx.fillStyle = turn === p && state !== "over" ? "#fde047" : "#94a3b8";
@@ -304,7 +311,7 @@
             ctx.fillText(`${turn === p ? "▶ " : ""}Player ${p} ${g ? (g === "solid" ? "● Solid" : "◐ Stripe") : ""}`, x, 18);
             if (g) {
               const left = balls.filter((b) => !b.in && groupOf(b.n) === g);
-              left.forEach((b, i) => drawBall(b, p === 1 ? 30 + i * 22 : W - 30 - i * 22, 42, 8));
+              left.forEach((b, i) => drawBall(b, p === 1 ? 30 + i * 22 : SW - 30 - i * 22, 42, 8));
               if (!left.length) { ctx.fillStyle = "#fde047"; ctx.font = '700 13px "Segoe UI", sans-serif'; ctx.fillText("Ab 8 ball daalo!", x, 42); }
             }
           }
@@ -315,21 +322,26 @@
           ctx.fillText(`Shots: ${shots}`, 20, 22);
           ctx.textAlign = "right";
           ctx.fillStyle = "#94a3b8";
-          ctx.fillText(`Best: ${best ?? "–"}`, W - 20, 22);
+          ctx.fillText(`Best: ${best ?? "–"}`, SW - 20, 22);
         }
         if (msgT > 0) {
           ctx.globalAlpha = Math.min(1, msgT);
           ctx.textAlign = "center";
           ctx.font = '800 17px "Segoe UI", sans-serif';
           ctx.lineWidth = 5; ctx.strokeStyle = "rgba(0,0,0,0.8)"; ctx.lineJoin = "round";
-          ctx.strokeText(msg, W / 2, H - 16);
+          ctx.strokeText(msg, SW / 2, SH - 16);
           ctx.fillStyle = "#fff";
-          ctx.fillText(msg, W / 2, H - 16);
+          ctx.fillText(msg, SW / 2, SH - 16);
           ctx.globalAlpha = 1;
         }
       }
 
       function draw() {
+        ctx.fillStyle = "#0f1020";
+        ctx.fillRect(0, 0, SW, SH);
+        ctx.save();
+        if (tall) ctx.transform(0, -1, 1, 0, 0, W + 60);
+        worldPass = true;
         drawTable();
         if (state === "aim") {
           const pr = predict(), c = cue();
@@ -356,22 +368,24 @@
           ctx.fillStyle = "#1f2937"; ctx.fillRect(-back - 260, -3.5, 70, 7);
           ctx.fillStyle = "#e0f2fe"; ctx.fillRect(-back - 12, -2.5, 6, 5);
           ctx.restore();
-          if (aim.power > 0) {
-            ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(W / 2 - 80, H - 46, 160, 10);
-            ctx.fillStyle = `hsl(${120 - aim.power * 120},85%,50%)`; ctx.fillRect(W / 2 - 80, H - 46, 160 * aim.power, 10);
-          }
+        }
+        worldPass = false;
+        ctx.restore();
+        if (state === "aim" && aim.power > 0) {
+          ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(SW / 2 - 80, SH - 46, 160, 10);
+          ctx.fillStyle = `hsl(${120 - aim.power * 120},85%,50%)`; ctx.fillRect(SW / 2 - 80, SH - 46, 160 * aim.power, 10);
         }
         hud();
         if (state === "over") {
           ctx.fillStyle = "rgba(0,0,0,0.5)";
-          ctx.fillRect(0, 0, W, H);
+          ctx.fillRect(0, 0, SW, SH);
           ctx.textAlign = "center";
-          ctx.font = '800 30px "Segoe UI", sans-serif';
+          ctx.font = `800 ${tall ? 22 : 30}px "Segoe UI", sans-serif`;
           ctx.fillStyle = "#fff";
-          ctx.fillText(msg, W / 2, H / 2 - 10);
+          ctx.fillText(msg, SW / 2, SH / 2 - 10);
           ctx.font = '600 16px "Segoe UI", sans-serif';
           ctx.fillStyle = "#cbd5e1";
-          ctx.fillText(IS_TOUCH ? "Tap = naya game" : "Click = naya game", W / 2, H / 2 + 26);
+          ctx.fillText(IS_TOUCH ? "Tap = naya game" : "Click = naya game", SW / 2, SH / 2 + 26);
         }
       }
 
@@ -382,13 +396,13 @@
         if (state === "over") { reset(); return; }
         if (state !== "aim") return;
         canvas.setPointerCapture(e.pointerId);
-        const p = canvasPoint(canvas, e, W, H);
+        const p = toWorld(canvasPoint(canvas, e, SW, SH));
         if (e.pointerType === "mouse") aim.a = Math.atan2(p.y - cue().y, p.x - cue().x);
         aim.drag = { x: p.x, y: p.y, mouse: e.pointerType === "mouse" };
       });
       canvas.addEventListener("pointermove", (e) => {
         if (state !== "aim") return;
-        const p = canvasPoint(canvas, e, W, H);
+        const p = toWorld(canvasPoint(canvas, e, SW, SH));
         if (!aim.drag) {
           if (e.pointerType === "mouse") aim.a = Math.atan2(p.y - cue().y, p.x - cue().x);
           return;
@@ -430,7 +444,12 @@
         requestAnimationFrame(loop);
       }
       document.addEventListener("visibilitychange", () => { last = performance.now(); });
-      const resize = () => fitCanvas(canvas, ctx, wrap, W, H);
+      function resize() {
+        tall = isPortrait(wrap);
+        SW = tall ? H : W;
+        SH = tall ? W + 100 : H;
+        fitCanvas(canvas, ctx, wrap, SW, SH);
+      }
       window.addEventListener("resize", resize);
       setMode(mode);
       resize();

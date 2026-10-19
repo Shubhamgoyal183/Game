@@ -72,7 +72,8 @@
   <script src="../../js/common.js"></script>
   <script>
     (() => {
-      const CELL = 40, COLS = 20, ROWS = 12, W = COLS * CELL, H = ROWS * CELL;
+      const CELL = 40;
+      let COLS = 20, ROWS = 12, W = COLS * CELL, H = ROWS * CELL;
       const TANK_R = 14, SPEED = 135, BACK = 85, ROT = 3.2;
       const B_SPEED = 300, B_LIFE = 5, MAX_B = 4, COOLDOWN = 0.35, WIN = 5;
       const canvas = document.getElementById("game");
@@ -137,11 +138,15 @@
 
       function newRound() {
         mapIdx = (mapIdx + 1) % MAPS.length;
-        grid = MAPS[mapIdx];
-        tanks = [
-          makeTank(1, CELL * 1, H / 2, 0, "#22c55e"),
-          makeTank(2, W - CELL * 1, H / 2, Math.PI, "#f97316"),
-        ];
+        // Phone seedha ho toh maidan bhi khada (map ko transpose karo): Green neeche, Orange upar
+        const tall = isPortrait(wrap);
+        const m = MAPS[mapIdx];
+        grid = tall ? Array.from({ length: m[0].length }, (_, y) => m.map((row) => row[y]).join("")) : m;
+        ROWS = grid.length; COLS = grid[0].length; W = COLS * CELL; H = ROWS * CELL;
+        tanks = tall
+          ? [makeTank(1, W / 2, H - CELL, -Math.PI / 2, "#22c55e"), makeTank(2, W / 2, CELL, Math.PI / 2, "#f97316")]
+          : [makeTank(1, CELL, H / 2, 0, "#22c55e"), makeTank(2, W - CELL, H / 2, Math.PI, "#f97316")];
+        resize();
         bullets = [];
         state = "count";
         roundT = 1.2;
@@ -494,7 +499,7 @@
         requestAnimationFrame(loop);
       }
       document.addEventListener("visibilitychange", () => { last = performance.now(); });
-      const resize = () => fitCanvas(canvas, ctx, wrap, W, H);
+      function resize() { fitCanvas(canvas, ctx, wrap, W, H); }
       window.addEventListener("resize", resize);
       setMode(mode);
       requestAnimationFrame(loop);

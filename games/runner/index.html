@@ -27,7 +27,8 @@
   <script src="../../js/common.js"></script>
   <script>
     (() => {
-      const H = 400, GROUND = 330, PX = 110;
+      const PX = 110;
+      let H = 400, GROUND = 330;
       const GRAV = 2000, JUMP = -700, JUMP2 = -600;
       let W = 640;
       const canvas = document.getElementById("game");
@@ -344,8 +345,11 @@
       document.addEventListener("visibilitychange", () => { last = performance.now(); });
       // Screen ke hisaab se chaudai (phone seedha ho ya laptop chauda)
       function resize() {
-        W = Math.round(Math.min(820, Math.max(420, (H * wrap.clientWidth) / Math.max(1, wrap.clientHeight))));
-        fitCanvas(canvas, ctx, wrap, W, H);
+        ({ W, H } = fitCanvasFill(canvas, ctx, wrap, 440, 400, 820, 900));
+        const shift = H - 70 - GROUND;
+        GROUND = H - 70;
+        // Khel ke beech size badla toh sab cheezein zameen ke saath khiskao
+        if (me) { me.y += shift; obs.forEach((o) => o.y !== undefined && (o.y += shift)); coins.forEach((c) => (c.y += shift)); }
       }
       window.addEventListener("resize", resize);
       resize();

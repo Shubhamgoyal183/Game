@@ -27,8 +27,9 @@
   <script src="../../js/common.js"></script>
   <script>
     (() => {
-      const W = 360, H = 640, WALL = 44;
-      const NINJA_Y = H * 0.68, JUMP_TIME = 0.3;
+      let W = 360, H = 640;
+      const WALL = 44, JUMP_TIME = 0.3;
+      let NINJA_Y = H * 0.68;
       const X_LEFT = WALL + 15, X_RIGHT = W - WALL - 15;
       const canvas = document.getElementById("game");
       const ctx = canvas.getContext("2d");
@@ -370,7 +371,11 @@
         requestAnimationFrame(loop);
       }
       document.addEventListener("visibilitychange", () => { last = performance.now(); });
-      const resize = () => fitCanvas(canvas, ctx, wrap, W, H);
+      const resize = () => {
+        ({ W, H } = fitCanvasFill(canvas, ctx, wrap, 360, 640, 360, 860));
+        NINJA_Y = H * 0.68;
+        if (ninja && !ninja.dead) ninja.y = NINJA_Y;
+      };
       window.addEventListener("resize", resize);
       resize();
       reset();

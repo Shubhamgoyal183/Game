@@ -55,6 +55,20 @@ function fitCanvas(canvas, ctx, box, W, H) {
   return scale;
 }
 
+// Screen bharne wala fit: game ki duniya kam se kam minW x minH rehti hai, aur jo taraf
+// screen mein jagah bachi ho (phone seedha = upar-neeche, laptop = side mein) us taraf maxW/maxH tak badh jaati hai.
+function fitCanvasFill(canvas, ctx, box, minW, minH, maxW = minW, maxH = minH) {
+  const bw = Math.max(1, box.clientWidth), bh = Math.max(1, box.clientHeight);
+  const s = Math.min(bw / minW, bh / minH);
+  const W = Math.round(Math.min(maxW, Math.max(minW, bw / s)));
+  const H = Math.round(Math.min(maxH, Math.max(minH, bh / s)));
+  fitCanvas(canvas, ctx, box, W, H);
+  return { W, H };
+}
+
+// Phone seedha (portrait) pakda hai?
+const isPortrait = (box) => box.clientHeight > box.clientWidth * 1.1;
+
 // Pointer event ko canvas ke logical coordinates mein badlo
 function canvasPoint(canvas, e, W, H) {
   const r = canvas.getBoundingClientRect();

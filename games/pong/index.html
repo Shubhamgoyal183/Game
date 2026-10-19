@@ -47,7 +47,8 @@
     (() => {
       // Field khada (portrait) hai: Player 1 neeche, Player 2 / Computer upar.
       // Phone ko table par rakh ke dono taraf se khel sakte hain.
-      const W = 400, H = 680;
+      const W = 400;
+      let H = 680; // phone lamba ho toh maidan bhi lamba
       const PW = 90, PH = 14, BALL_R = 9;
       const WIN_SCORE = 7;
       const KEY_SPEED = 560;
@@ -61,14 +62,9 @@
       let p1, p2, ball, state, serveTo, scores, flash, lastHitBy;
 
       function resize() {
-        const dpr = Math.min(window.devicePixelRatio || 1, 3);
-        const scale = Math.min(wrap.clientWidth / W, wrap.clientHeight / H);
-        const cw = Math.floor(W * scale), ch = Math.floor(H * scale);
-        canvas.style.width = cw + "px";
-        canvas.style.height = ch + "px";
-        canvas.width = Math.floor(cw * dpr);
-        canvas.height = Math.floor(ch * dpr);
-        ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0);
+        ({ H } = fitCanvasFill(canvas, ctx, wrap, W, 680, W, 860));
+        if (p1) p1.y = H - 40;
+        if (ball && state !== "play") ball.y = H / 2;
       }
 
       function resetMatch() {

@@ -27,7 +27,8 @@
   <script src="../../js/common.js"></script>
   <script>
     (() => {
-      const COLS = 9, CELL = 40, W = COLS * CELL, H = 640;
+      const COLS = 9, CELL = 40, W = COLS * CELL;
+      let H = 640;
       const canvas = document.getElementById("game");
       const ctx = canvas.getContext("2d");
       const wrap = document.getElementById("wrap");
@@ -452,7 +453,7 @@
         requestAnimationFrame(loop);
       }
       document.addEventListener("visibilitychange", () => { last = performance.now(); });
-      const resize = () => fitCanvas(canvas, ctx, wrap, W, H);
+      const resize = () => ({ H } = fitCanvasFill(canvas, ctx, wrap, W, 640, W, 900));
       window.addEventListener("resize", resize);
       resize();
       reset();

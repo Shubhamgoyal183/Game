@@ -13,9 +13,7 @@
   <title>Snake – Game Zone</title>
   <link rel="stylesheet" href="../../css/game.css">
   <style>
-    html, body { overflow: hidden; overscroll-behavior: none; }
-    body { user-select: none; -webkit-user-select: none; }
-    main.stage { gap: 12px; padding-bottom: 12px; }
+    main.stage { gap: 8px; }
     .hud {
       display: flex;
       justify-content: space-between;
@@ -24,12 +22,6 @@
       font-weight: 700;
     }
     .hud .label { color: var(--muted); font-size: 0.8rem; font-weight: 600; }
-    canvas {
-      display: block;
-      border-radius: 12px;
-      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
-      touch-action: none;
-    }
     .dpad {
       display: grid;
       grid-template-columns: repeat(3, 62px);
@@ -55,7 +47,7 @@
     .hint { color: var(--muted); font-size: 0.85rem; text-align: center; }
   </style>
 </head>
-<body>
+<body class="fullscreen">
   <header class="topbar">
     <a class="btn small" href="../../index.html">← Home</a>
     <h1>🐍 Snake</h1>
@@ -67,7 +59,7 @@
       <div><span class="label">SCORE </span><span id="score">0</span></div>
       <div><span class="label">BEST </span><span id="best">0</span></div>
     </div>
-    <canvas id="game"></canvas>
+    <div class="canvas-wrap" id="wrap"><canvas id="game"></canvas></div>
     <div class="dpad">
       <button class="up" data-dir="up" aria-label="Up">▲</button>
       <button class="left" data-dir="left" aria-label="Left">◀</button>
@@ -80,7 +72,8 @@
   <script src="../../js/common.js"></script>
   <script>
     (() => {
-      const COLS = 20, ROWS = 20;
+      const COLS = 20;
+      let ROWS = 20; // phone seedha ho toh zyada rows (board lamba)
       const START_STEP = 140;  // ms per move
       const MIN_STEP = 65;
 
@@ -97,14 +90,15 @@
         left: { x: -1, y: 0 }, right: { x: 1, y: 0 },
       };
 
-      let size = 0; // canvas ka CSS size (px)
+      const wrap = document.getElementById("wrap");
       function resize() {
-        const reserved = isTouch ? 270 : 170; // header + hud + dpad/hint ki jagah
-        size = Math.floor(Math.max(200, Math.min(window.innerWidth - 32, window.innerHeight - reserved, 560)));
-        const dpr = Math.min(window.devicePixelRatio || 1, 3);
-        canvas.style.width = canvas.style.height = size + "px";
-        canvas.width = canvas.height = Math.floor(size * dpr);
-        ctx.setTransform(canvas.width / COLS, 0, 0, canvas.height / ROWS, 0, 0);
+        // Khel chal raha ho toh board ka size mat badlo, sirf scale karo
+        if (!snake || state === "ready" || state === "over") {
+          const want = Math.round((COLS * wrap.clientHeight) / Math.max(1, wrap.clientWidth));
+          const rows = Math.max(16, Math.min(34, want));
+          if (rows !== ROWS) { ROWS = rows; if (snake) reset(); }
+        }
+        fitCanvas(canvas, ctx, wrap, COLS, ROWS);
         draw();
       }
 

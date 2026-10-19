@@ -27,7 +27,7 @@
   <script src="../../js/common.js"></script>
   <script>
     (() => {
-      const W = 360, H = 640;
+      let W = 360, H = 640;
       const GRAVITY = 1700, JUMP = -880, SPRING = -1450, MOVE = 330;
       const PW = 64, PH = 14;
       const canvas = document.getElementById("game");
@@ -363,7 +363,7 @@
         requestAnimationFrame(loop);
       }
       document.addEventListener("visibilitychange", () => { last = performance.now(); });
-      const resize = () => fitCanvas(canvas, ctx, wrap, W, H);
+      const resize = () => ({ W, H } = fitCanvasFill(canvas, ctx, wrap, 360, 640, 360, 860));
       window.addEventListener("resize", resize);
       resize();
       reset();

@@ -172,13 +172,16 @@
       }
 
       // ---------- Draw ----------
+      // Level 480x720 ka hai; lambi screen par use beech mein rakho (OFF = upar ki khaali jagah)
+      let SH = H, OFF = 0;
       function drawBg() {
         ctx.fillStyle = "#c9a26b";
-        ctx.fillRect(0, 0, W, H);
+        ctx.fillRect(0, -OFF, W, SH);
         ctx.strokeStyle = "rgba(120,80,30,0.25)";
         ctx.lineWidth = 2;
-        for (let y = 30; y < H; y += 60) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
-        for (let y = 0; y < H; y += 60) for (let x = (y / 60) % 2 ? 0 : 60; x < W; x += 120) { ctx.beginPath(); ctx.moveTo(x, y + 30); ctx.lineTo(x, y + 90); ctx.stroke(); }
+        const y0 = -Math.ceil(OFF / 60) * 60;
+        for (let y = y0 + 30; y < H + OFF; y += 60) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+        for (let y = y0; y < H + OFF; y += 60) for (let x = Math.abs(y / 60) % 2 ? 0 : 60; x < W; x += 120) { ctx.beginPath(); ctx.moveTo(x, y + 30); ctx.lineTo(x, y + 90); ctx.stroke(); }
       }
 
       function drawMonster() {
@@ -239,6 +242,10 @@
       }
 
       function draw() {
+        ctx.fillStyle = "#c9a26b";
+        ctx.fillRect(0, 0, W, SH);
+        ctx.save();
+        ctx.translate(0, OFF);
         drawBg();
         for (const h of hooks) {
           ctx.strokeStyle = h.used ? "rgba(0,0,0,0.15)" : "rgba(30,64,175,0.6)";
@@ -283,6 +290,7 @@
         }
         const now = performance.now();
         trail = trail.filter((p) => now - p.t < 150);
+        ctx.restore();
         // HUD
         ctx.fillStyle = "rgba(0,0,0,0.3)";
         ctx.fillRect(0, 0, W, 40);
@@ -299,7 +307,7 @@
         e.preventDefault();
         sound.unlock();
         if (state !== "play") return;
-        const p = canvasPoint(canvas, e, W, H);
+        const p = canvasPoint(canvas, e, W, SH); p.y -= OFF;
         // Bubble phodo
         if (candy.bubble && Math.hypot(p.x - candy.x, p.y - candy.y) < 40) { candy.bubble = null; sound.beep(900, 0.08, "sine", 0.06, 300); return; }
         canvas.setPointerCapture(e.pointerId);
@@ -309,7 +317,7 @@
       });
       canvas.addEventListener("pointermove", (e) => {
         if (!swipe) return;
-        const p = canvasPoint(canvas, e, W, H);
+        const p = canvasPoint(canvas, e, W, SH); p.y -= OFF;
         cut(last.x, last.y, p.x, p.y);
         trail.push({ ...p, t: performance.now() });
         last = p;
@@ -330,7 +338,7 @@
         requestAnimationFrame(loop);
       }
       document.addEventListener("visibilitychange", () => { lastT = performance.now(); });
-      const resize = () => fitCanvas(canvas, ctx, wrap, W, H);
+      const resize = () => { ({ H: SH } = fitCanvasFill(canvas, ctx, wrap, W, H, W, 1000)); OFF = Math.round((SH - H) / 2); };
       window.addEventListener("resize", resize);
       resize();
       load(lvIdx);

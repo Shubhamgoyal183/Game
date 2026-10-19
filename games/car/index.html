@@ -47,7 +47,8 @@
     (() => {
       // ================= Settings =================
       // Har player ki apni sadak (RW x RH logical size). 2 Player mein do sadakein saath-saath.
-      const RW = 340, RH = 620, GAP = 12;
+      const RW = 340, GAP = 12;
+      let RH = 620; // sadak ki lambai screen ke hisaab se
       const ROAD_L = 54, ROAD_R = RW - 54, LANES = 3;
       const LANE_W = (ROAD_R - ROAD_L) / LANES;
       const CAR_W = 42, CAR_H = 76;
@@ -63,7 +64,7 @@
       const pauseBtn = document.getElementById("pauseBtn");
       const isTouch = !window.matchMedia("(hover: hover) and (pointer: fine)").matches;
       const CTRL_H = isTouch ? 84 : 0;     // phone par neeche buttons ki patti
-      const PLAYER_Y = RH - CTRL_H - 100;
+      let PLAYER_Y = RH - CTRL_H - 100;
 
       let mode = store.get("car_mode", "1p");
       let best = store.get("car_best", 0);
@@ -78,16 +79,12 @@
       }
 
       function resize() {
-        W = mode === "2p" ? RW * 2 + GAP : RW;
-        H = RH;
-        const dpr = Math.min(window.devicePixelRatio || 1, 3);
-        const scale = Math.min(wrap.clientWidth / W, wrap.clientHeight / H);
-        const cw = Math.floor(W * scale), ch = Math.floor(H * scale);
-        canvas.style.width = cw + "px";
-        canvas.style.height = ch + "px";
-        canvas.width = Math.floor(cw * dpr);
-        canvas.height = Math.floor(ch * dpr);
-        ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0);
+        const w = mode === "2p" ? RW * 2 + GAP : RW;
+        ({ W, H } = fitCanvasFill(canvas, ctx, wrap, w, 620, w, 900));
+        RH = H;
+        const py = RH - CTRL_H - 100;
+        players.forEach((p) => (p.y += py - PLAYER_Y)); // khel ke beech size badla toh gaadi bhi khiskao
+        PLAYER_Y = py;
       }
 
       function makePlayer(id, seed, color) {

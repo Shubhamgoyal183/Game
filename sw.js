@@ -1,5 +1,5 @@
 // Ye file tools/build-sw.js se banti hai. Haath se mat badlo.
-const CACHE = "gamezone-f2f3860a3f";
+const CACHE = "gamezone-ae58bf3dbe";
 const FILES = [
   "./",
   "./css/game.css",
