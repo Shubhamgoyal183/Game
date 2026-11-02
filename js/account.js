@@ -118,6 +118,7 @@
       <p class="gz-sync" id="gzSyncTxt">☁️ ${lastSync ? "Cloud par save: " + new Date(lastSync).toLocaleTimeString() : "Cloud se jud raha hai..."}</p>
       <button class="gz-btn primary" id="gzSyncNow">☁️ Abhi save karo</button>
       <button class="gz-btn danger" id="gzLogout">🚪 Logout</button>
+      <div class="gz-ver"><span id="gzVer">📱 App</span><button class="gz-link" id="gzUpd" type="button">🔄 Update check karo</button></div>
       <p class="gz-foot">Game Zone by Shubham Goyal</p>
     ` : `
       <div class="gz-grab"></div>
@@ -127,9 +128,15 @@
         <p>Abhi progress sirf is phone mein save hai</p>
       </div>
       <button class="gz-btn primary" id="gzLoginNow">🔑 Login / Naya account</button>
+      <div class="gz-ver"><span id="gzVer">📱 App</span><button class="gz-link" id="gzUpd" type="button">🔄 Update check karo</button></div>
       <p class="gz-foot">Login karne par aapka guest progress bhi account mein jud jayega</p>
     `;
     $("gzSheet").hidden = $("gzSheetBg").hidden = false;
+    // Version aur update button (sirf Android app mein)
+    if (window.GZUpdate) {
+      GZUpdate.version().then((v) => { if (v && $("gzVer")) $("gzVer").textContent = `📱 Version ${v}`; });
+      $("gzUpd").onclick = () => { $("gzUpd").textContent = "⏳ Check ho raha hai..."; GZUpdate.check().finally(() => { closeSheet(); }); };
+    } else document.querySelectorAll(".gz-ver").forEach((e) => e.remove());
     requestAnimationFrame(() => document.body.classList.add("gz-sheet-open"));
     if (user) {
       $("gzSyncNow").onclick = async () => { $("gzSyncTxt").textContent = "☁️ Save ho raha hai..."; await push(true); };

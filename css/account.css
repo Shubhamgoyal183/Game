@@ -164,6 +164,8 @@ body.gz-sheet-open .gz-sheet-bg { opacity: 1; }
 .gz-stats b { display: block; font-size: 1.3rem; color: #ffcc33; }
 .gz-stats span { font-size: 0.72rem; color: #9ea2d4; }
 .gz-sync { font-size: 0.82rem; color: #9ea2d4; margin: 6px 0 2px; }
+.gz-ver { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 14px; padding: 10px 12px; background: #24275a; border-radius: 12px; font-size: 0.85rem; color: #c7c9f0; }
+.gz-ver .gz-link { margin: 0; }
 .gz-foot { font-size: 0.75rem; color: #6b6fa8; margin-top: 14px; }
 
 /* ---------- Toast ---------- */

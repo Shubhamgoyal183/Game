@@ -6,22 +6,40 @@
   const URL_JSON = "https://raw.githubusercontent.com/Shubhamgoyal183/Game/main/version.json";
   const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
-  // Ek session mein ek hi baar check
-  if (sessionStorage.getItem("gz_update_checked")) return;
-  sessionStorage.setItem("gz_update_checked", "1");
-
-  async function check() {
-    if (!C.isPluginAvailable("App")) return;
-    const info = await C.Plugins.App.getInfo(); // { version: "1.1.0", build: "3" }
-    const res = await fetch(URL_JSON + "?t=" + Date.now(), { cache: "no-store" });
-    if (!res.ok) return;
-    const v = await res.json();
-    if (!(v.versionCode > +info.build)) return;
-    // "Baad mein" dabaya tha toh usi version ke liye 1 din tak mat dikhao
+  // manual = profile se "Update check karo" dabaya (tab har haal mein jawab do)
+  async function check(manual) {
+    if (!C.isPluginAvailable("App")) return manual && say("⚠️ Update check is version mein nahi chalta");
+    const info = await C.Plugins.App.getInfo(); // { version: "1.2.0", build: "4" }
+    let v;
+    try {
+      const res = await fetch(URL_JSON + "?t=" + Date.now(), { cache: "no-store" });
+      if (!res.ok) throw new Error(res.status);
+      v = await res.json();
+    } catch (e) {
+      return manual && say("⚠️ Check nahi ho paya — internet on karke try karo");
+    }
+    localStorage.setItem("gz_update_last", String(Date.now()));
+    if (!(v.versionCode > +info.build)) return manual && say(`✅ Aap latest version ${info.version} par ho`);
+    // "Baad mein" dabaya tha toh usi version ke liye 1 din tak khud se mat dikhao
     const later = JSON.parse(localStorage.getItem("gz_update_later") || "{}");
-    if (later.code === v.versionCode && Date.now() - later.at < 86400000) return;
+    if (!manual && later.code === v.versionCode && Date.now() - later.at < 86400000) return;
     show(v, info);
   }
+
+  function say(t) {
+    const el = document.createElement("div");
+    el.className = "gz-toast";
+    el.textContent = t;
+    document.body.appendChild(el);
+    setTimeout(() => el.classList.add("out"), 2600);
+    setTimeout(() => el.remove(), 3100);
+  }
+
+  // Profile sheet se use karne ke liye
+  window.GZUpdate = {
+    check: () => check(true).catch(() => say("⚠️ Check nahi ho paya")),
+    version: async () => (C.isPluginAvailable("App") ? (await C.Plugins.App.getInfo()).version : ""),
+  };
 
   function show(v, info) {
     const css = document.createElement("style");
@@ -62,6 +80,11 @@
     };
   }
 
-  // Splash aur login ke baad dikhe
-  setTimeout(() => check().catch(() => {}), 2500);
+  // Har baar app kholne par (zyada se zyada har 30 minute mein ek baar), splash ke baad
+  const lastCheck = +localStorage.getItem("gz_update_last") || 0;
+  if (Date.now() - lastCheck > 30 * 60 * 1000) setTimeout(() => check(false).catch(() => {}), 2500);
+  // App background se wapas aaye tab bhi
+  if (C.isPluginAvailable("App") && C.Plugins.App.addListener) C.Plugins.App.addListener("resume", () => {
+    if (Date.now() - (+localStorage.getItem("gz_update_last") || 0) > 30 * 60 * 1000) check(false).catch(() => {});
+  });
 })();
