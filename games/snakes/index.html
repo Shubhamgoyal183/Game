@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <script src="../../js/site.js" defer></script>
+  <title>Saanp-Seedhi – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+</head>
+<body class="fullscreen">
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🐍 Saanp-Seedhi</h1>
+    <span class="spacer"></span>
+  </header>
+  <main class="stage">
+    <div class="row" id="countRow">
+      <button class="btn small" data-n="1">👤 vs 🤖</button>
+      <button class="btn small" data-n="2">👥 2</button>
+      <button class="btn small" data-n="3">👥 3</button>
+      <button class="btn small" data-n="4">👥 4</button>
+    </div>
+    <div class="canvas-wrap" id="wrap"><canvas id="game"></canvas></div>
+    <div class="hint">Tap = dice · 🪜 seedhi = upar · 🐍 saanp = neeche · 6 = ek aur baari · 100 par bilkul sahi number chahiye</div>
+  </main>
+
+  <div class="modal" id="modal">
+    <div class="panel">
+      <h2 id="mTitle"></h2>
+      <p id="mText"></p>
+      <button class="btn primary" id="mBtn"></button>
+    </div>
+  </div>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const W = 600, H = 720, CELL = 60, BOARD = 600;
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const wrap = document.getElementById("wrap");
+      const LADDERS = { 4: 25, 13: 46, 33: 49, 42: 63, 50: 69, 62: 81, 74: 92 };
+      const SNAKES = { 27: 5, 40: 3, 43: 18, 54: 31, 66: 45, 76: 58, 89: 53, 99: 41 };
+      const PCOL = ["#ef4444", "#3b82f6", "#22c55e", "#facc15"];
+      const PNAME = ["Red", "Blue", "Green", "Yellow"];
+
+      let count = store.get("snakes_n", 1), players, turn, dice, phase, rollT, anim, msg, pulse = 0;
+
+      // Khaana number (1–100) → screen par beech ka point (zig-zag board)
+      function xy(n) {
+        const i = n - 1, row = Math.floor(i / 10), col = row % 2 ? 9 - (i % 10) : i % 10;
+        return { x: col * CELL + CELL / 2, y: BOARD - row * CELL - CELL / 2 };
+      }
+
+      function newGame() {
+        const humans = count === 1 ? [true, false] : Array(count).fill(true);
+        players = humans.map((human, i) => ({ pos: 0, human, col: PCOL[i], name: human ? PNAME[i] : "🤖 Computer" }));
+        turn = 0; dice = 1; phase = "roll"; anim = null;
+        msg = `${players[0].name} ki baari — tap karo`;
+        hideModal();
+      }
+
+      function roll() {
+        if (phase !== "roll") return;
+        phase = "rolling"; rollT = 0.5;
+        sound.beep(300, 0.05, "square", 0.04);
+      }
+
+      function afterRoll() {
+        const p = players[turn];
+        const target = p.pos + dice;
+        if (target > 100) {
+          msg = `${p.name}: ${dice} aaya — 100 se zyada, ruk jao`;
+          return setTimeout(() => endTurn(false), 900);
+        }
+        const path = [];
+        for (let k = p.pos + 1; k <= target; k++) path.push(k);
+        phase = "anim";
+        anim = { p, path, i: 0, t: 0 };
+      }
+
+      function landed(p) {
+        if (LADDERS[p.pos]) {
+          msg = `🪜 ${p.name} seedhi chadh gaya! ${p.pos} → ${LADDERS[p.pos]}`;
+          anim = { p, path: [LADDERS[p.pos]], i: 0, t: -0.2, jump: true };
+          sound.beep(500, 0.3, "sine", 0.07, 1200);
+          return;
+        }
+        if (SNAKES[p.pos]) {
+          msg = `🐍 ${p.name} ko saanp ne kaata! ${p.pos} → ${SNAKES[p.pos]}`;
+          anim = { p, path: [SNAKES[p.pos]], i: 0, t: -0.2, jump: true };
+          sound.beep(400, 0.4, "sawtooth", 0.06, 80);
+          if (navigator.vibrate) navigator.vibrate(100);
+          return;
+        }
+        if (p.pos === 100) {
+          phase = "over";
+          [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => sound.beep(f, 0.15, "sine", 0.07), i * 120));
+          return setTimeout(() => showModal(`🏆 ${p.name} jeet gaya!`, "100 tak pahle pahunch gaya!", "Naya game", newGame), 500);
+        }
+        endTurn(dice === 6);
+      }
+
+      function endTurn(again) {
+        if (!again) turn = (turn + 1) % players.length;
+        const p = players[turn];
+        phase = "roll";
+        msg = again ? `🎉 6 aaya! ${p.name} ki ek aur baari` : `${p.name} ki baari${p.human ? " — tap karo" : ""}`;
+        if (!p.human) setTimeout(roll, 700);
+      }
+
+      function update(dt) {
+        pulse += dt;
+        if (phase === "rolling") {
+          rollT -= dt;
+          dice = 1 + Math.floor(Math.random() * 6);
+          if (rollT <= 0) { sound.beep(500 + dice * 60, 0.08, "triangle", 0.06); afterRoll(); }
+        }
+        if (anim) {
+          anim.t += dt;
+          const step = anim.jump ? 0.45 : 0.16;
+          if (anim.t >= step) {
+            anim.t = 0;
+            anim.p.pos = anim.path[anim.i++];
+            if (!anim.jump) sound.beep(650, 0.03, "square", 0.03);
+            if (anim.i >= anim.path.length) {
+              const { p, jump } = anim;
+              anim = null;
+              if (jump) { if (p.pos === 100) landed(p); else endTurn(dice === 6); }
+              else landed(p);
+            }
+          }
+        }
+      }
+
+      // ---------- Draw ----------
+      function drawLadder(a, b) {
+        const A = xy(a), B = xy(b);
+        const dx = B.x - A.x, dy = B.y - A.y, len = Math.hypot(dx, dy), nx = (-dy / len) * 11, ny = (dx / len) * 11;
+        ctx.strokeStyle = "#92400e"; ctx.lineWidth = 6; ctx.lineCap = "round";
+        ctx.beginPath(); ctx.moveTo(A.x + nx, A.y + ny); ctx.lineTo(B.x + nx, B.y + ny); ctx.moveTo(A.x - nx, A.y - ny); ctx.lineTo(B.x - nx, B.y - ny); ctx.stroke();
+        ctx.lineWidth = 4; ctx.strokeStyle = "#b45309";
+        const steps = Math.floor(len / 22);
+        for (let i = 1; i < steps; i++) { const t = i / steps; ctx.beginPath(); ctx.moveTo(A.x + dx * t + nx, A.y + dy * t + ny); ctx.lineTo(A.x + dx * t - nx, A.y + dy * t - ny); ctx.stroke(); }
+      }
+
+      function drawSnake(a, b, i) {
+        const A = xy(a), B = xy(b);
+        const dx = B.x - A.x, dy = B.y - A.y, len = Math.hypot(dx, dy), nx = -dy / len, ny = dx / len;
+        const col = ["#16a34a", "#7c3aed", "#dc2626", "#ea580c", "#0891b2", "#be185d", "#65a30d", "#4f46e5"][i % 8];
+        const pts = [];
+        for (let k = 0; k <= 30; k++) { const t = k / 30, w = Math.sin(t * Math.PI * 3) * 16; pts.push([A.x + dx * t + nx * w, A.y + dy * t + ny * w]); }
+        ctx.lineCap = "round"; ctx.lineJoin = "round";
+        ctx.strokeStyle = "rgba(0,0,0,0.25)"; ctx.lineWidth = 15;
+        ctx.beginPath(); pts.forEach(([x, y], k) => (k ? ctx.lineTo(x + 2, y + 3) : ctx.moveTo(x + 2, y + 3))); ctx.stroke();
+        ctx.strokeStyle = col; ctx.lineWidth = 12;
+        ctx.beginPath(); pts.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke();
+        ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 3; ctx.setLineDash([4, 8]);
+        ctx.beginPath(); pts.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke(); ctx.setLineDash([]);
+        // sar (shuru wala khaana)
+        ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(A.x, A.y, 14, 11, Math.atan2(dy, dx), 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(A.x - 4, A.y - 3, 3.5, 0, Math.PI * 2); ctx.arc(A.x + 4, A.y - 3, 3.5, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#111"; ctx.beginPath(); ctx.arc(A.x - 4, A.y - 3, 1.6, 0, Math.PI * 2); ctx.arc(A.x + 4, A.y - 3, 1.6, 0, Math.PI * 2); ctx.fill();
+      }
+
+      function draw() {
+        ctx.fillStyle = "#0f1020"; ctx.fillRect(0, 0, W, H);
+        for (let n = 1; n <= 100; n++) {
+          const { x, y } = xy(n), row = Math.floor((n - 1) / 10), col = Math.floor((x - CELL / 2) / CELL);
+          ctx.fillStyle = (row + col) % 2 ? "#fef3c7" : ["#fde68a", "#bbf7d0", "#bfdbfe", "#fbcfe8", "#ddd6fe"][row % 5];
+          ctx.fillRect(x - CELL / 2, y - CELL / 2, CELL, CELL);
+          ctx.fillStyle = "rgba(0,0,0,0.45)";
+          ctx.font = '700 12px "Segoe UI", sans-serif'; ctx.textAlign = "left"; ctx.textBaseline = "top";
+          ctx.fillText(n, x - CELL / 2 + 4, y - CELL / 2 + 3);
+        }
+        ctx.font = "26px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        const c100 = xy(100); ctx.fillText("🏁", c100.x, c100.y + 4);
+        Object.entries(LADDERS).forEach(([a, b]) => drawLadder(+a, b));
+        Object.entries(SNAKES).forEach(([a, b], i) => drawSnake(+a, b, i));
+        // Goti
+        players.forEach((p, i) => {
+          const base = p.pos === 0 ? { x: 20 + i * 26, y: BOARD + 22 } : xy(p.pos);
+          const same = players.filter((q) => q.pos === p.pos && p.pos > 0);
+          const k = same.indexOf(p), off = same.length > 1 ? (k - (same.length - 1) / 2) * 12 : 0;
+          const x = base.x + off, y = base.y - (anim && anim.p === p && !anim.jump ? Math.abs(Math.sin(anim.t * 20)) * 6 : 0);
+          ctx.fillStyle = "rgba(0,0,0,0.35)"; ctx.beginPath(); ctx.ellipse(x + 2, y + 9, 11, 5, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = p.col; ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.stroke();
+          if (i === turn && phase === "roll") { ctx.strokeStyle = `rgba(17,24,39,${0.5 + Math.sin(pulse * 8) * 0.4})`; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, 17, 0, Math.PI * 2); ctx.stroke(); }
+        });
+        // Panel
+        const p = players[turn];
+        ctx.fillStyle = "#1b1d40"; ctx.fillRect(0, BOARD, W, H - BOARD);
+        players.forEach((q, i) => {
+          if (q.pos === 0) return;
+          ctx.fillStyle = q.col; ctx.beginPath(); ctx.arc(20 + i * 26, BOARD + 22, 8, 0, Math.PI * 2); ctx.fill();
+        });
+        ctx.fillStyle = p.col; ctx.font = '800 22px "Segoe UI", sans-serif'; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+        ctx.fillText(`${p.name} ki baari`, 16, BOARD + 60);
+        ctx.fillStyle = "#cbd5e1"; ctx.font = '600 14px "Segoe UI", sans-serif';
+        ctx.fillText(msg.length > 46 ? msg.slice(0, 45) + "…" : msg, 16, BOARD + 92);
+        // Dice
+        const s = 76, dx = W - 70 + (phase === "rolling" ? (Math.random() - 0.5) * 10 : 0), dy = BOARD + 60;
+        ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(dx - s / 2, dy - s / 2, s, s, 14) : ctx.rect(dx - s / 2, dy - s / 2, s, s); ctx.fill();
+        ctx.strokeStyle = p.col; ctx.lineWidth = 5; ctx.stroke();
+        const P = { 1: [[0, 0]], 2: [[-1, -1], [1, 1]], 3: [[-1, -1], [0, 0], [1, 1]], 4: [[-1, -1], [1, -1], [-1, 1], [1, 1]], 5: [[-1, -1], [1, -1], [0, 0], [-1, 1], [1, 1]], 6: [[-1, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [1, 1]] };
+        ctx.fillStyle = dice === 6 ? "#dc2626" : "#111827";
+        for (const [ax, ay] of P[dice]) { ctx.beginPath(); ctx.arc(dx + ax * s * 0.26, dy + ay * s * 0.26, s * 0.09, 0, Math.PI * 2); ctx.fill(); }
+      }
+
+      canvas.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        sound.unlock();
+        if (players && players[turn].human) roll();
+      });
+      window.addEventListener("keydown", (e) => {
+        if ((e.code === "Space" || e.code === "Enter") && players && players[turn].human) { e.preventDefault(); roll(); }
+      });
+      function setCount(n) {
+        count = n;
+        store.set("snakes_n", n);
+        document.querySelectorAll("#countRow .btn").forEach((b) => b.classList.toggle("active", +b.dataset.n === n));
+        newGame();
+      }
+      document.querySelectorAll("#countRow .btn").forEach((b) => b.addEventListener("click", () => { b.blur(); setCount(+b.dataset.n); }));
+
+      let last = performance.now();
+      function loop(now) {
+        const dt = Math.min((now - last) / 1000, 1 / 20);
+        last = now;
+        update(dt);
+        draw();
+        requestAnimationFrame(loop);
+      }
+      const resize = () => fitCanvas(canvas, ctx, wrap, W, H);
+      window.addEventListener("resize", resize);
+      resize();
+      setCount(count);
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>

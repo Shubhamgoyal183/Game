@@ -38,9 +38,7 @@ body {
   justify-content: space-between;
   gap: 12px;
   padding: 8px 14px;
-  background: rgba(11, 12, 29, 0.6);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: rgba(11, 12, 29, 0.94);
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   margin-bottom: 6px;
 }
@@ -139,7 +137,6 @@ main.stage {
   place-items: center;
   padding: 16px;
   z-index: 50;
-  backdrop-filter: blur(4px);
 }
 .modal.show { display: grid; }
 .modal .panel { text-align: center; display: flex; flex-direction: column; gap: 14px; }

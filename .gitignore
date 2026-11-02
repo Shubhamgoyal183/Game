@@ -1,0 +1,6 @@
+# Android app build (app/)
+app/node_modules/
+app/www/
+# Signing key aur password — kabhi GitHub par mat daalna, iska backup alag rakho
+app/android/keystore/
+app/android/keystore.properties

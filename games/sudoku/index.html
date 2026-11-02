@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <script src="../../js/site.js" defer></script>
+  <title>Sudoku – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+  <style>
+    body { user-select: none; -webkit-user-select: none; }
+    main.stage { gap: 10px; }
+    .info { display: flex; justify-content: space-between; width: min(96vw, 460px); font-weight: 700; color: var(--muted); }
+    .info b { color: var(--text); }
+    .grid {
+      display: grid; grid-template-columns: repeat(9, 1fr);
+      width: min(96vw, 460px, calc(100dvh - 300px)); min-width: 270px; aspect-ratio: 1;
+      background: #94a3b8; gap: 1px; border: 3px solid #e2e8f0; border-radius: 8px; overflow: hidden;
+    }
+    .c {
+      background: #1b1d40; border: none; padding: 0; position: relative; cursor: pointer;
+      font: 700 clamp(1rem, 5.2vw, 1.6rem) "Segoe UI", sans-serif; color: #93c5fd; touch-action: manipulation;
+    }
+    .c.given { color: #f8fafc; }
+    .c.bR { border-bottom: 2px solid #e2e8f0; } .c.bC { border-right: 2px solid #e2e8f0; }
+    .c.area { background: #24275a; } .c.same { background: #3b3f86; } .c.sel { background: #4f46e5; }
+    .c.err { color: #f87171; }
+    .c.flash { animation: fl 0.5s; }
+    @keyframes fl { 50% { background: #16a34a; } }
+    .notes { position: absolute; inset: 1px; display: grid; grid-template-columns: repeat(3, 1fr); font-size: clamp(0.45rem, 2vw, 0.62rem); color: #a5b4fc; line-height: 1; }
+    .notes span { display: grid; place-items: center; }
+    .pad { display: grid; grid-template-columns: repeat(9, 1fr); gap: 5px; width: min(96vw, 460px); }
+    .pad button { border: none; border-radius: 10px; background: var(--card); color: #fff; font: 800 1.35rem "Segoe UI", sans-serif; padding: 9px 0 4px; cursor: pointer; display: flex; flex-direction: column; align-items: center; touch-action: manipulation; }
+    .pad button small { font-size: 0.6rem; color: var(--muted); font-weight: 600; }
+    .pad button.done { opacity: 0.25; }
+    .tools { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+    .tools .btn.on { background: var(--accent); color: #111; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🔢 Sudoku</h1>
+    <span class="spacer"></span>
+  </header>
+  <main class="stage">
+    <div class="row" id="levelRow">
+      <button class="btn small" data-level="easy">Easy</button>
+      <button class="btn small" data-level="medium">Medium</button>
+      <button class="btn small" data-level="hard">Hard</button>
+    </div>
+    <div class="info"><span>⏱ <b id="time">0:00</b></span><span>❌ <b id="mist">0</b>/3</span><span>💡 <b id="hints">3</b></span></div>
+    <div class="grid" id="grid"></div>
+    <div class="tools">
+      <button class="btn small" id="undoBtn">↶ Undo</button>
+      <button class="btn small" id="eraseBtn">⌫ Mitao</button>
+      <button class="btn small" id="notesBtn">✏️ Notes</button>
+      <button class="btn small" id="hintBtn">💡 Hint</button>
+    </div>
+    <div class="pad" id="pad"></div>
+    <div class="hint" id="hint">Khaana chuno, phir number · Har line, column aur 3×3 box mein 1–9 ek-ek baar</div>
+  </main>
+
+  <div class="modal" id="modal">
+    <div class="panel">
+      <h2 id="mTitle"></h2>
+      <p id="mText"></p>
+      <button class="btn primary" id="mBtn"></button>
+    </div>
+  </div>
+
+  <script src="../../js/common.js"></script>
+  <script src="sudoku.js"></script>
+  <script>
+    (() => {
+      const $ = (id) => document.getElementById(id);
+      const CLUES = { easy: 40, medium: 32, hard: 26 };
+      if (!IS_TOUCH) $("hint").textContent = "Click + 1–9 · Arrow keys · Backspace = mitao · N = notes";
+      let level = store.get("sudoku_level", "easy");
+      let g; // { puzzle, solution, cur, notes, given, mistakes, hints, secs, done }
+      let sel = -1, notesMode = false, undo = [], timer;
+      const cells = [];
+
+      for (let i = 0; i < 81; i++) {
+        const b = document.createElement("button");
+        const r = Math.floor(i / 9), c = i % 9;
+        b.className = "c" + (r === 2 || r === 5 ? " bR" : "") + (c === 2 || c === 5 ? " bC" : "");
+        b.addEventListener("click", () => { sel = i; render(); });
+        $("grid").appendChild(b);
+        cells.push(b);
+      }
+      $("pad").innerHTML = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-n="${n}">${n}<small></small></button>`).join("");
+      document.querySelectorAll("#pad button").forEach((b) => b.addEventListener("click", () => input(+b.dataset.n)));
+
+      function newGame(resume) {
+        const saved = resume && store.get("sudoku_save", null);
+        if (saved && saved.level === level && !saved.done) g = saved;
+        else {
+          const { puzzle, solution } = Sudoku.generate(CLUES[level]);
+          g = { level, puzzle, solution, cur: puzzle.slice(), notes: Array.from({ length: 81 }, () => []), mistakes: 0, hints: 3, secs: 0, done: false };
+        }
+        sel = -1; undo = []; notesMode = false;
+        hideModal();
+        clearInterval(timer);
+        timer = setInterval(() => { if (!g.done && !document.hidden) { g.secs++; $("time").textContent = fmt(g.secs); if (g.secs % 5 === 0) save(); } }, 1000);
+        render();
+      }
+      const fmt = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+      const save = () => store.set("sudoku_save", g);
+
+      function render() {
+        const sv = sel >= 0 ? g.cur[sel] : 0;
+        const sr = Math.floor(sel / 9), sc = sel % 9, sb = Math.floor(sr / 3) * 3 + Math.floor(sc / 3);
+        cells.forEach((el, i) => {
+          const r = Math.floor(i / 9), c = i % 9, v = g.cur[i];
+          const area = sel >= 0 && (r === sr || c === sc || Math.floor(r / 3) * 3 + Math.floor(c / 3) === sb);
+          el.classList.toggle("given", !!g.puzzle[i]);
+          el.classList.toggle("area", area);
+          el.classList.toggle("same", !!sv && v === sv);
+          el.classList.toggle("sel", i === sel);
+          el.classList.toggle("err", !!v && v !== g.solution[i]);
+          el.innerHTML = v ? v : g.notes[i].length ? `<div class="notes">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<span>${g.notes[i].includes(n) ? n : ""}</span>`).join("")}</div>` : "";
+        });
+        document.querySelectorAll("#pad button").forEach((b) => {
+          const n = +b.dataset.n, left = 9 - g.cur.filter((v, i) => v === n && v === g.solution[i]).length;
+          b.querySelector("small").textContent = left;
+          b.classList.toggle("done", left === 0);
+        });
+        $("mist").textContent = g.mistakes;
+        $("hints").textContent = g.hints;
+        $("time").textContent = fmt(g.secs);
+        $("notesBtn").classList.toggle("on", notesMode);
+      }
+
+      function input(n) {
+        if (g.done || sel < 0 || g.puzzle[sel]) return;
+        sound.unlock();
+        undo.push({ i: sel, v: g.cur[sel], notes: g.notes[sel].slice() });
+        if (notesMode) {
+          if (g.cur[sel]) return;
+          const ns = g.notes[sel];
+          g.notes[sel] = ns.includes(n) ? ns.filter((x) => x !== n) : [...ns, n].sort();
+          sound.beep(700, 0.03, "triangle", 0.03);
+        } else {
+          g.cur[sel] = n;
+          g.notes[sel] = [];
+          if (n !== g.solution[sel]) {
+            g.mistakes++;
+            sound.beep(160, 0.2, "square", 0.05);
+            if (navigator.vibrate) navigator.vibrate(60);
+            if (g.mistakes >= 3) { g.done = true; save(); render(); return showModal("😢 3 galtiyaan ho gayi", "Phir se try karo!", "Naya puzzle", () => newGame(false)); }
+          } else {
+            // Is number ke notes us row/col/box se hata do
+            const r = Math.floor(sel / 9), c = sel % 9;
+            for (let k = 0; k < 81; k++) {
+              const rr = Math.floor(k / 9), cc = k % 9;
+              if (rr === r || cc === c || (Math.floor(rr / 3) === Math.floor(r / 3) && Math.floor(cc / 3) === Math.floor(c / 3))) g.notes[k] = g.notes[k].filter((x) => x !== n);
+            }
+            sound.beep(600, 0.05, "sine", 0.05);
+            flashDone(sel);
+            if (g.cur.every((v, i) => v === g.solution[i])) return win();
+          }
+        }
+        save();
+        render();
+      }
+
+      // Row / column / box poora hua toh chamkao
+      function flashDone(i) {
+        const r = Math.floor(i / 9), c = i % 9, groups = [[], [], []];
+        for (let k = 0; k < 9; k++) {
+          groups[0].push(r * 9 + k); groups[1].push(k * 9 + c);
+          groups[2].push((Math.floor(r / 3) * 3 + Math.floor(k / 3)) * 9 + Math.floor(c / 3) * 3 + (k % 3));
+        }
+        for (const grp of groups) if (grp.every((k) => g.cur[k] === g.solution[k])) grp.forEach((k) => { cells[k].classList.remove("flash"); void cells[k].offsetWidth; cells[k].classList.add("flash"); });
+      }
+
+      function win() {
+        g.done = true;
+        save();
+        render();
+        const key = "sudoku_best_" + level, best = store.get(key, null);
+        const rec = !best || g.secs < best;
+        if (rec) store.set(key, g.secs);
+        [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => sound.beep(f, 0.15, "sine", 0.07), i * 120));
+        showModal(rec ? "🏆 Naya Record!" : "🎉 Sudoku poora!", `${fmt(g.secs)} mein · ${g.mistakes} galti`, "Naya puzzle", () => newGame(false));
+      }
+
+      $("eraseBtn").onclick = () => { if (sel < 0 || g.puzzle[sel] || g.done) return; undo.push({ i: sel, v: g.cur[sel], notes: g.notes[sel].slice() }); g.cur[sel] = 0; g.notes[sel] = []; save(); render(); };
+      $("notesBtn").onclick = () => { notesMode = !notesMode; render(); };
+      $("undoBtn").onclick = () => { const u = undo.pop(); if (!u || g.done) return; g.cur[u.i] = u.v; g.notes[u.i] = u.notes; sel = u.i; save(); render(); };
+      $("hintBtn").onclick = () => {
+        if (g.done || g.hints <= 0) return;
+        let i = sel >= 0 && g.cur[sel] !== g.solution[sel] ? sel : g.cur.findIndex((v, k) => v !== g.solution[k]);
+        if (i < 0) return;
+        g.hints--;
+        sel = i;
+        const m = notesMode; notesMode = false;
+        input(g.solution[i]);
+        notesMode = m;
+      };
+      window.addEventListener("keydown", (e) => {
+        const n = parseInt(e.key, 10);
+        if (n >= 1 && n <= 9) input(n);
+        else if (e.key === "Backspace" || e.key === "Delete" || e.key === "0") $("eraseBtn").click();
+        else if (e.key.toLowerCase() === "n") $("notesBtn").click();
+        else if (e.key.startsWith("Arrow")) {
+          e.preventDefault();
+          if (sel < 0) sel = 0;
+          const r = Math.floor(sel / 9), c = sel % 9;
+          const [dr, dc] = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[e.key];
+          sel = ((r + dr + 9) % 9) * 9 + ((c + dc + 9) % 9);
+          render();
+        }
+      });
+      document.querySelectorAll("#levelRow .btn").forEach((b) => b.addEventListener("click", () => {
+        level = b.dataset.level;
+        store.set("sudoku_level", level);
+        document.querySelectorAll("#levelRow .btn").forEach((x) => x.classList.toggle("active", x === b));
+        newGame(false);
+      }));
+      document.querySelectorAll("#levelRow .btn").forEach((x) => x.classList.toggle("active", x.dataset.level === level));
+      newGame(true);
+    })();
+  </script>
+</body>
+</html>

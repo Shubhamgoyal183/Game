@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <script src="../../js/site.js" defer></script>
+  <title>Cricket – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+</head>
+<body class="fullscreen">
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🏏 Cricket</h1>
+    <span class="spacer"></span>
+  </header>
+  <main class="stage">
+    <div class="row" id="modeRow">
+      <button class="btn small" data-mode="chase">🎯 Target chase</button>
+      <button class="btn small" data-mode="2p">👥 2 Players</button>
+    </div>
+    <div class="canvas-wrap" id="wrap"><canvas id="game"></canvas></div>
+    <div class="hint" id="hint">Ball bat ke paas aaye tab tap / Space · Perfect timing = 6 · Chooke aur ball stumps par = OUT</div>
+  </main>
+
+  <div class="modal" id="modal">
+    <div class="panel">
+      <h2 id="mTitle"></h2>
+      <p id="mText"></p>
+      <button class="btn primary" id="mBtn"></button>
+    </div>
+  </div>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const wrap = document.getElementById("wrap");
+      let W = 400, H = 720;
+      const BALLS = 12, WICKETS = 3, HIT_Z = 0.93;
+
+      let mode = store.get("cricket_mode", "chase");
+      let level = store.get("cricket_level", 1);
+      let inn, innings, phase, t, ball, hitBall, swing, popup, crowdT = 0, scores2p;
+
+      // ---------- Perspective helpers (z: 0 = bowler, 1 = batsman) ----------
+      const topY = () => H * 0.36, botY = () => H * 0.8;
+      const fz = (z) => Math.pow(z, 1.5);
+      const groundY = (z) => topY() + (botY() - topY()) * fz(z);
+      const scaleAt = (z) => 0.28 + 0.72 * fz(z);
+      const halfPitch = (z) => (26 + 64 * fz(z)) * (W / 400);
+
+      function newInnings(name) {
+        return { name, runs: 0, balls: 0, wkts: 0, log: [] };
+      }
+
+      function newMatch() {
+        hideModal();
+        if (mode === "chase") {
+          innings = [newInnings("Aap")];
+          inn = innings[0];
+          inn.target = 14 + level * 5;
+        } else {
+          innings = [newInnings("Player 1"), newInnings("Player 2")];
+          inn = innings[0];
+        }
+        nextBall(1.2);
+      }
+
+      function nextBall(delay = 0.9) {
+        phase = "wait";
+        t = -delay;
+        hitBall = null;
+        swing = 0;
+        const diff = mode === "chase" ? Math.min(1, (level - 1) / 8) : 0.4;
+        ball = {
+          T: 1.25 - diff * 0.4 - Math.random() * 0.15, // ball aane ka samay (tez = kam)
+          line: (Math.random() - 0.5) * 0.7,
+          bounce: 0.6 + Math.random() * 0.22,
+          swingX: (Math.random() - 0.5) * 0.25,
+          z: 0, tapped: false,
+        };
+      }
+
+      // ---------- Batting ----------
+      function tap() {
+        sound.unlock();
+        if (phase !== "flight" || ball.tapped) return;
+        ball.tapped = true;
+        swing = 1;
+        const dt = t - ball.T * HIT_Z; // + = der se, - = jaldi
+        const a = Math.abs(dt);
+        let runs = -1, label = "";
+        if (a < 0.05) { runs = 6; label = "SIX! 🚀"; }
+        else if (a < 0.095) { runs = 4; label = "FOUR! 🔥"; }
+        else if (a < 0.14) { runs = Math.random() < 0.5 ? 2 : 3; label = runs + " runs"; }
+        else if (a < 0.2) {
+          if (Math.random() < 0.25) { runs = 0; label = "CAUGHT! 😱"; out(label); return; }
+          runs = 1; label = "1 run";
+        }
+        if (runs < 0) return; // chook gaye — ball aage jaake faisla karegi
+        sound.beep(runs >= 4 ? 220 : 340, 0.08, "square", 0.08, 120);
+        if (runs === 6) setTimeout(() => sound.beep(880, 0.25, "sine", 0.06, 1400), 120);
+        // Jaldi = leg side (baayein), der = off side (daayein)
+        const dir = Math.max(-1, Math.min(1, dt / 0.15));
+        hitBall = { x: ballX(), y: ballY(), vx: dir * (runs >= 4 ? 520 : 260) + (Math.random() - 0.5) * 80, vy: -(runs === 6 ? 900 : runs === 4 ? 520 : 380), s: scaleAt(ball.z), t: 0, runs };
+        score(runs, label);
+      }
+
+      function score(runs, label) {
+        inn.runs += runs;
+        inn.balls++;
+        inn.log.push(runs === 0 ? "•" : String(runs));
+        popup = { text: label, t: 1.3, big: runs >= 4 };
+        phase = "result";
+        t = 0;
+        if (navigator.vibrate && runs === 6) navigator.vibrate([40, 40, 40]);
+      }
+
+      function out(label) {
+        inn.wkts++;
+        inn.balls++;
+        inn.log.push("W");
+        popup = { text: label, t: 1.4, big: true, bad: true };
+        phase = "result";
+        t = 0;
+        sound.beep(130, 0.5, "sawtooth", 0.08, 50);
+        if (navigator.vibrate) navigator.vibrate(200);
+      }
+
+      function afterBall() {
+        const done = inn.balls >= BALLS || inn.wkts >= WICKETS || (inn.target && inn.runs >= inn.target) ||
+          (mode === "2p" && inn === innings[1] && inn.runs > innings[0].runs);
+        if (!done) return nextBall();
+        if (mode === "chase") {
+          const won = inn.runs >= inn.target;
+          if (won) { level++; store.set("cricket_level", level); }
+          [523, 659, 784].forEach((f, i) => won && setTimeout(() => sound.beep(f, 0.15, "sine", 0.07), i * 120));
+          phase = "over";
+          return showModal(won ? `🏆 Jeet gaye! Level ${level - 1} paar` : "😢 Target nahi hua",
+            `${inn.runs}/${inn.wkts} (${overs(inn.balls)} ov) · Target ${inn.target}`,
+            won ? "Agla level ▶" : "Phir se try", newMatch);
+        }
+        if (inn === innings[0]) {
+          phase = "over";
+          return showModal(`Player 1: ${inn.runs}/${inn.wkts}`, `Ab Player 2 ki batting — target ${inn.runs + 1}`, "▶ Player 2 shuru", () => { inn = innings[1]; nextBall(1); });
+        }
+        const [a, b] = innings;
+        phase = "over";
+        showModal(a.runs === b.runs ? "🤝 Match tie!" : `🏆 Player ${b.runs > a.runs ? 2 : 1} jeeta!`,
+          `P1: ${a.runs}/${a.wkts}   ·   P2: ${b.runs}/${b.wkts}`, "Naya match", newMatch);
+      }
+
+      const overs = (b) => `${Math.floor(b / 6)}.${b % 6}`;
+
+      // ---------- Update ----------
+      function ballX() { return W / 2 + (ball.line + ball.swingX * ball.z * ball.z) * halfPitch(ball.z); }
+      function ballY() {
+        const z = ball.z, s = scaleAt(z);
+        const h = z < ball.bounce ? 70 * (1 - z / ball.bounce) : 30 * ((z - ball.bounce) / (1 - ball.bounce));
+        return groundY(Math.min(z, 1.1)) - h * s * (W / 400);
+      }
+
+      function update(dt) {
+        crowdT += dt;
+        if (popup) popup.t -= dt;
+        swing = Math.max(0, swing - dt * 3);
+        if (phase === "over") return;
+        t += dt;
+        if (phase === "wait" && t >= 0) { phase = "runup"; t = 0; }
+        if (phase === "runup" && t >= 0.8) { phase = "flight"; t = 0; sound.beep(600, 0.04, "triangle", 0.03); }
+        if (phase === "flight") {
+          ball.z = t / ball.T;
+          if (!ball.bounced && ball.z >= ball.bounce) { ball.bounced = true; sound.beep(180, 0.04, "square", 0.04); }
+          if (ball.z >= 1.06) {
+            // Ball nikal gayi
+            if (Math.abs(ball.line + ball.swingX) < 0.2) { sound.beep(260, 0.1, "square", 0.06); out("BOWLED! 💥"); }
+            else score(0, ball.tapped ? "Chook gaye!" : "Dot ball");
+          }
+        }
+        if (hitBall) {
+          hitBall.t += dt;
+          hitBall.x += hitBall.vx * dt;
+          hitBall.y += hitBall.vy * dt;
+          hitBall.vy += 700 * dt;
+          hitBall.s *= 1 - dt * (hitBall.runs === 6 ? 0.9 : 0.5);
+        }
+        if (phase === "result" && t >= 1.4) afterBall();
+      }
+
+      // ---------- Draw ----------
+      function drawField() {
+        const sky = ctx.createLinearGradient(0, 0, 0, topY());
+        sky.addColorStop(0, "#1e3a8a"); sky.addColorStop(1, "#60a5fa");
+        ctx.fillStyle = sky; ctx.fillRect(0, 0, W, topY());
+        // Stadium + crowd
+        const sy = topY() - H * 0.13;
+        ctx.fillStyle = "#334155"; ctx.fillRect(0, sy, W, H * 0.11);
+        for (let i = 0; i < 90; i++) {
+          const x = (i * 37) % W, y = sy + 4 + ((i * 13) % Math.round(H * 0.09));
+          ctx.fillStyle = ["#f87171", "#fbbf24", "#60a5fa", "#a78bfa", "#f9fafb", "#34d399"][i % 6];
+          ctx.fillRect(x, y + Math.sin(crowdT * 6 + i) * (popup && popup.big && popup.t > 0 ? 3 : 0.6), 4, 4);
+        }
+        ctx.fillStyle = "#e2e8f0"; ctx.fillRect(0, topY() - H * 0.02, W, H * 0.02);
+        // Ghaas (dhaariyan)
+        ctx.fillStyle = "#15803d"; ctx.fillRect(0, topY(), W, H - topY());
+        for (let i = 0; i < 8; i++) {
+          if (i % 2) continue;
+          const z0 = i / 8, z1 = (i + 1) / 8;
+          ctx.fillStyle = "#16a34a";
+          ctx.fillRect(0, groundY(z0), W, groundY(z1) - groundY(z0));
+        }
+        // Pitch
+        const z0 = 0, z1 = 1.12;
+        ctx.fillStyle = "#d6b98c";
+        ctx.beginPath();
+        ctx.moveTo(W / 2 - halfPitch(z0) * 1.15, groundY(z0)); ctx.lineTo(W / 2 + halfPitch(z0) * 1.15, groundY(z0));
+        ctx.lineTo(W / 2 + halfPitch(z1) * 1.15, groundY(z1)); ctx.lineTo(W / 2 - halfPitch(z1) * 1.15, groundY(z1));
+        ctx.fill();
+        ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+        for (const z of [0.06, 0.94]) { ctx.beginPath(); ctx.moveTo(W / 2 - halfPitch(z) * 1.1, groundY(z)); ctx.lineTo(W / 2 + halfPitch(z) * 1.1, groundY(z)); ctx.stroke(); }
+      }
+
+      function stumps(z) {
+        const s = scaleAt(z) * (W / 400), y = groundY(z), w = 22 * s, h = 46 * s;
+        ctx.fillStyle = "#fef3c7";
+        for (let i = -1; i <= 1; i++) ctx.fillRect(W / 2 + i * w / 2 - 2 * s, y - h, 4 * s, h);
+        ctx.fillStyle = "#b45309"; ctx.fillRect(W / 2 - w / 2 - 2 * s, y - h - 3 * s, w + 4 * s, 3 * s);
+      }
+
+      function bowler() {
+        const run = phase === "runup" ? t / 0.8 : phase === "wait" ? 0 : 1;
+        const z = -0.02 + run * 0.02, s = scaleAt(Math.max(0, z)) * (W / 400) * 1.2;
+        const x = W / 2 + 14 * s, y = groundY(0) - 2 - (1 - run) * 4;
+        const leg = Math.sin(run * 20) * 6 * s;
+        ctx.strokeStyle = "#e5e7eb"; ctx.lineWidth = 4 * s; ctx.lineCap = "round";
+        ctx.beginPath(); ctx.moveTo(x, y - 20 * s); ctx.lineTo(x - leg, y); ctx.moveTo(x, y - 20 * s); ctx.lineTo(x + leg, y); ctx.stroke();
+        ctx.fillStyle = "#1d4ed8"; ctx.fillRect(x - 6 * s, y - 40 * s, 12 * s, 21 * s);
+        const arm = phase === "runup" ? -Math.PI / 2 + run * Math.PI * 1.6 : 0.5;
+        ctx.beginPath(); ctx.moveTo(x, y - 36 * s); ctx.lineTo(x + Math.cos(arm) * 16 * s, y - 36 * s + Math.sin(arm) * 16 * s); ctx.stroke();
+        ctx.fillStyle = "#f5c08a"; ctx.beginPath(); ctx.arc(x, y - 46 * s, 6 * s, 0, Math.PI * 2); ctx.fill();
+      }
+
+      function batsman() {
+        const k = W / 400, bx = W / 2 - 40 * k, by = groundY(0.98);
+        // pair
+        ctx.fillStyle = "#f8fafc";
+        ctx.fillRect(bx - 16 * k, by - 50 * k, 12 * k, 50 * k);
+        ctx.fillRect(bx + 4 * k, by - 50 * k, 12 * k, 50 * k);
+        // body (peeche se)
+        ctx.fillStyle = "#1e40af";
+        ctx.beginPath(); ctx.roundRect ? ctx.roundRect(bx - 22 * k, by - 108 * k, 44 * k, 62 * k, 12 * k) : ctx.rect(bx - 22 * k, by - 108 * k, 44 * k, 62 * k); ctx.fill();
+        ctx.fillStyle = "#fbbf24"; ctx.font = `800 ${18 * k}px "Segoe UI", sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText("18", bx, by - 82 * k);
+        // helmet
+        ctx.fillStyle = "#1e3a8a"; ctx.beginPath(); ctx.arc(bx, by - 120 * k, 16 * k, 0, Math.PI * 2); ctx.fill();
+        // bat (swing)
+        const ang = swing > 0 ? -2.2 + (1 - swing) * 3.2 : 0.35;
+        ctx.save();
+        ctx.translate(bx + 18 * k, by - 80 * k);
+        ctx.rotate(ang);
+        ctx.fillStyle = "#e7c27d"; ctx.fillRect(-5 * k, 0, 10 * k, 70 * k);
+        ctx.fillStyle = "#1f2937"; ctx.fillRect(-3 * k, -18 * k, 6 * k, 20 * k);
+        ctx.restore();
+      }
+
+      function drawBall() {
+        if (phase === "flight" || (phase === "result" && !hitBall && ball.z < 1.1)) {
+          const z = Math.min(ball.z, 1.1), s = scaleAt(z) * (W / 400);
+          ctx.fillStyle = "rgba(0,0,0,0.3)";
+          ctx.beginPath(); ctx.ellipse(ballX(), groundY(z), 6 * s, 2.5 * s, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#dc2626";
+          ctx.beginPath(); ctx.arc(ballX(), ballY(), 6 * s, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = "#fff"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(ballX(), ballY(), 4 * s, -0.6, 0.6); ctx.stroke();
+        }
+        if (hitBall && hitBall.s > 0.05) {
+          ctx.fillStyle = "#dc2626";
+          ctx.beginPath(); ctx.arc(hitBall.x, hitBall.y, 6 * hitBall.s * (W / 400), 0, Math.PI * 2); ctx.fill();
+        }
+      }
+
+      function text(s, x, y, size, color, align = "center") {
+        ctx.font = `800 ${size}px "Segoe UI", sans-serif`;
+        ctx.textAlign = align; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
+        ctx.lineWidth = size / 4; ctx.strokeStyle = "rgba(0,0,0,0.75)"; ctx.strokeText(s, x, y);
+        ctx.fillStyle = color; ctx.fillText(s, x, y);
+      }
+
+      function hud() {
+        ctx.fillStyle = "rgba(15,16,32,0.85)";
+        ctx.fillRect(0, 0, W, 74);
+        text(`${inn.name}: ${inn.runs}/${inn.wkts}`, 14, 22, 22, "#fff", "left");
+        text(`Overs ${overs(inn.balls)}/${BALLS / 6}`, 14, 52, 15, "#cbd5e1", "left");
+        let tgt = inn.target || (mode === "2p" && inn === innings[1] ? innings[0].runs + 1 : null);
+        if (tgt) {
+          const need = Math.max(0, tgt - inn.runs), left = BALLS - inn.balls;
+          text(`Target ${tgt}`, W - 14, 22, 18, "#fde047", "right");
+          text(`${need} chahiye ${left} ball mein`, W - 14, 52, 13, "#fde68a", "right");
+        } else if (mode === "chase") text(`Level ${level}`, W - 14, 22, 18, "#fde047", "right");
+        // Pichhli gendein
+        inn.log.slice(-6).forEach((r, i) => {
+          const x = W / 2 - 75 + i * 30 + (W > 420 ? 30 : 0), y = 98;
+          ctx.fillStyle = r === "W" ? "#dc2626" : r === "6" ? "#7c3aed" : r === "4" ? "#2563eb" : "rgba(0,0,0,0.5)";
+          ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#fff"; ctx.font = '800 12px "Segoe UI", sans-serif'; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText(r, x, y + 1);
+        });
+      }
+
+      function draw() {
+        drawField();
+        stumps(0);
+        bowler();
+        drawBall();
+        stumps(1);
+        batsman();
+        hud();
+        if (popup && popup.t > 0) {
+          const sc = popup.big ? 1 + Math.max(0, popup.t - 1) * 1.5 : 1;
+          text(popup.text, W / 2, H * 0.3, (popup.big ? 50 : 30) * sc, popup.bad ? "#f87171" : popup.big ? "#fde047" : "#fff");
+        }
+        if (phase === "wait" && inn.balls === 0 && t < -0.3) text(IS_TOUCH ? "Ball paas aaye tab TAP!" : "Ball paas aaye tab SPACE!", W / 2, H * 0.3, 22, "#fff");
+      }
+
+      // ---------- Input ----------
+      canvas.addEventListener("pointerdown", (e) => { e.preventDefault(); tap(); });
+      window.addEventListener("keydown", (e) => { if (e.code === "Space" || e.code === "Enter") { e.preventDefault(); if (!e.repeat) tap(); } });
+      function setMode(m) {
+        mode = m;
+        store.set("cricket_mode", m);
+        document.querySelectorAll("#modeRow .btn").forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
+        document.activeElement && document.activeElement.blur();
+        newMatch();
+      }
+      document.querySelectorAll("#modeRow .btn").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+
+      let last = performance.now();
+      function loop(now) {
+        const dt = Math.min((now - last) / 1000, 1 / 30);
+        last = now;
+        update(dt);
+        draw();
+        requestAnimationFrame(loop);
+      }
+      document.addEventListener("visibilitychange", () => { last = performance.now(); });
+      const resize = () => ({ W, H } = fitCanvasFill(canvas, ctx, wrap, 400, 680, 520, 900));
+      window.addEventListener("resize", resize);
+      resize();
+      setMode(mode);
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>

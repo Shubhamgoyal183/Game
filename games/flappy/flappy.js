@@ -13,7 +13,9 @@
   const muteBtn = document.getElementById("muteBtn");
 
   function resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    // 2x kaafi hai; kamzor phone par 1.5x (smooth chalne ke liye)
+    const low = (navigator.hardwareConcurrency || 8) <= 4 || (navigator.deviceMemory || 8) <= 3;
+    const dpr = Math.min(window.devicePixelRatio || 1, low ? 1.5 : 2);
     const scale = Math.min(window.innerWidth / W, window.innerHeight / H);
     const cssW = Math.floor(W * scale);
     const cssH = Math.floor(H * scale);

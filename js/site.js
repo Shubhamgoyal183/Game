@@ -1,4 +1,4 @@
-// Har page par chalta hai: offline support (service worker) + "Game Zone by Shubham Goyal" branding
+// Har page par chalta hai: "Game Zone by Shubham Goyal" branding + purane PWA ka cleanup
 (() => {
   // ---------- Branding ----------
   const BRAND = "🎮 Game Zone by Shubham Goyal";
@@ -23,10 +23,10 @@
     document.body.appendChild(tag);
   }
 
-  // ---------- Offline ----------
-  if (!("serviceWorker" in navigator) || location.protocol === "file:") return;
-  const swUrl = new URL("../sw.js", document.currentScript.src);
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register(swUrl.href, { scope: new URL("./", swUrl).href }).catch(() => {});
-  });
+  // ---------- Purana PWA cleanup ----------
+  // Pehle website offline app (service worker) thi; ab asli Android app hai. Purana cache hata do.
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.getRegistrations().then((rs) => rs.forEach((r) => r.unregister())).catch(() => {});
+    if (window.caches) caches.keys().then((ks) => ks.filter((k) => k.startsWith("gamezone-")).forEach((k) => caches.delete(k))).catch(() => {});
+  }
 })();

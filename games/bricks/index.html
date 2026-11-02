@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <script src="../../js/site.js" defer></script>
+  <title>Brick Breaker – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+</head>
+<body class="fullscreen">
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🧱 Brick Breaker</h1>
+    <span class="spacer"></span>
+  </header>
+  <main class="stage">
+    <div class="canvas-wrap" id="wrap"><canvas id="game"></canvas></div>
+    <div class="hint" id="hint">Mouse / ← → se paddle · Click / Space = ball chhodo · Power-ups pakdo!</div>
+  </main>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const W = 480, COLS = 8, BW = (W - 40) / COLS, BH = 24, TOP = 90, BR = 8;
+      let H = 760;
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const wrap = document.getElementById("wrap");
+      if (IS_TOUCH) document.getElementById("hint").textContent = "Ungli se paddle kheencho · Tap = ball chhodo · Power-ups pakdo!";
+
+      // 1-3 = kitni baar maarna, . = khaali
+      const LEVELS = [
+        ["11111111", "22222222", "11111111", "11111111"],
+        ["1.1.1.1.", ".2.2.2.2", "3.3.3.3.", ".1.1.1.1", "1.1.1.1."],
+        ["...33...", "..2222..", ".111111.", "11111111", ".111111.", "..2222.."],
+        ["31111113", "1......1", "1.2222.1", "1.2..2.1", "1.2222.1", "1......1", "31111113"],
+        ["22222222", "1.1.1.1.", "33333333", ".1.1.1.1", "22222222", "11111111"],
+      ];
+      const ROWCOL = ["#ef4444", "#f97316", "#facc15", "#22c55e", "#06b6d4", "#3b82f6", "#a855f7", "#ec4899"];
+
+      let paddle, balls, bricks, items, parts, level, score, best, lives, state, power;
+      best = store.get("bricks_best", 0);
+
+      const paddleY = () => H - 70;
+
+      function buildLevel(n) {
+        const lay = LEVELS[(n - 1) % LEVELS.length];
+        const extra = Math.floor((n - 1) / LEVELS.length);
+        bricks = [];
+        lay.forEach((row, r) => [...row].forEach((ch, c) => {
+          if (ch === ".") return;
+          const hp = Math.min(3, +ch + extra);
+          bricks.push({ x: 20 + c * BW, y: TOP + r * (BH + 6), hp, max: hp, col: ROWCOL[r % ROWCOL.length] });
+        }));
+      }
+
+      function resetBall() {
+        balls = [{ x: paddle.x, y: paddleY() - BR - 8, vx: 0, vy: 0, stuck: true }];
+      }
+
+      function reset() {
+        level = 1; score = 0; lives = 3;
+        paddle = { x: W / 2, w: 96 };
+        power = { wide: 0, slow: 0 };
+        items = []; parts = [];
+        buildLevel(level);
+        resetBall();
+        state = "play";
+      }
+
+      const speed = () => (380 + level * 18) * (power.slow > 0 ? 0.7 : 1);
+
+      function launch() {
+        sound.unlock();
+        if (state === "over") { reset(); return; }
+        for (const b of balls) if (b.stuck) {
+          b.stuck = false;
+          const a = -Math.PI / 2 + (Math.random() - 0.5) * 0.6;
+          b.vx = Math.cos(a) * speed(); b.vy = Math.sin(a) * speed();
+        }
+      }
+
+      function burst(x, y, col) {
+        for (let i = 0; i < 10; i++) parts.push({ x, y, vx: (Math.random() - 0.5) * 260, vy: (Math.random() - 0.5) * 260, life: 0.5, c: col });
+      }
+
+      function update(dt) {
+        for (const p of parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 400 * dt; p.life -= dt; }
+        parts = parts.filter((p) => p.life > 0);
+        if (state !== "play") return;
+        power.wide = Math.max(0, power.wide - dt);
+        power.slow = Math.max(0, power.slow - dt);
+        paddle.w += ((power.wide > 0 ? 150 : 96) - paddle.w) * Math.min(1, dt * 8);
+        if (keys.ArrowLeft || keys.KeyA) paddle.x -= 520 * dt;
+        if (keys.ArrowRight || keys.KeyD) paddle.x += 520 * dt;
+        if (targetX !== null) paddle.x += (targetX - paddle.x) * Math.min(1, dt * 25);
+        paddle.x = Math.max(paddle.w / 2, Math.min(W - paddle.w / 2, paddle.x));
+
+        const steps = 4;
+        for (const b of balls) {
+          if (b.stuck) { b.x = paddle.x; b.y = paddleY() - BR - 8; continue; }
+          // Speed hamesha sahi (slow power ke hisaab se)
+          const sp = Math.hypot(b.vx, b.vy) || 1, want = speed();
+          b.vx *= want / sp; b.vy *= want / sp;
+          for (let s = 0; s < steps; s++) {
+            const h = dt / steps;
+            b.x += b.vx * h; b.y += b.vy * h;
+            if (b.x < BR) { b.x = BR; b.vx = Math.abs(b.vx); }
+            if (b.x > W - BR) { b.x = W - BR; b.vx = -Math.abs(b.vx); }
+            if (b.y < 60 + BR) { b.y = 60 + BR; b.vy = Math.abs(b.vy); }
+            // Paddle: jahan lage us hisaab se kona
+            const py = paddleY();
+            if (b.vy > 0 && b.y + BR >= py && b.y + BR <= py + 16 && Math.abs(b.x - paddle.x) <= paddle.w / 2 + BR) {
+              const off = (b.x - paddle.x) / (paddle.w / 2);
+              const a = -Math.PI / 2 + off * 1.05;
+              b.vx = Math.cos(a) * want; b.vy = Math.sin(a) * want;
+              b.y = py - BR;
+              sound.beep(440, 0.03, "square", 0.04);
+            }
+            // Eentein
+            for (const k of bricks) {
+              if (k.hp <= 0) continue;
+              const nx = Math.max(k.x, Math.min(b.x, k.x + BW - 4)), ny = Math.max(k.y, Math.min(b.y, k.y + BH));
+              const dx = b.x - nx, dy = b.y - ny;
+              if (dx * dx + dy * dy > BR * BR) continue;
+              // Kis taraf se laga
+              if (Math.abs(dx) > Math.abs(dy)) b.vx = Math.sign(dx || -b.vx) * Math.abs(b.vx);
+              else b.vy = Math.sign(dy || -b.vy) * Math.abs(b.vy);
+              k.hp--;
+              score += 10;
+              sound.beep(600 + k.hp * 200, 0.04, "triangle", 0.05);
+              if (k.hp <= 0) {
+                burst(k.x + BW / 2, k.y + BH / 2, k.col);
+                const r = Math.random();
+                if (r < 0.06) items.push({ x: k.x + BW / 2, y: k.y, k: "wide" });
+                else if (r < 0.1) items.push({ x: k.x + BW / 2, y: k.y, k: "multi" });
+                else if (r < 0.14) items.push({ x: k.x + BW / 2, y: k.y, k: "slow" });
+                else if (r < 0.155) items.push({ x: k.x + BW / 2, y: k.y, k: "life" });
+              }
+              break;
+            }
+          }
+          if (b.y > H + 20) b.dead = true;
+        }
+        balls = balls.filter((b) => !b.dead);
+        if (!balls.length) {
+          lives--;
+          sound.beep(150, 0.4, "sawtooth", 0.07, 60);
+          if (navigator.vibrate) navigator.vibrate(120);
+          if (lives <= 0) {
+            state = "over";
+            if (score > best) { best = score; store.set("bricks_best", best); }
+            return;
+          }
+          power = { wide: 0, slow: 0 };
+          resetBall();
+        }
+        for (const it of items) {
+          it.y += 150 * dt;
+          if (it.y > paddleY() - 10 && it.y < paddleY() + 18 && Math.abs(it.x - paddle.x) < paddle.w / 2 + 12) {
+            it.dead = true;
+            sound.beep(700, 0.12, "sine", 0.07, 1300);
+            if (it.k === "life") lives = Math.min(5, lives + 1);
+            else if (it.k === "multi") {
+              const src = balls.find((b) => !b.stuck) || balls[0];
+              for (const a of [-0.5, 0.5]) balls.push({ x: src.x, y: src.y, vx: Math.cos(-Math.PI / 2 + a) * speed(), vy: Math.sin(-Math.PI / 2 + a) * speed(), stuck: false });
+            } else power[it.k] = 10;
+          }
+        }
+        items = items.filter((it) => !it.dead && it.y < H + 20);
+        if (bricks.every((k) => k.hp <= 0)) {
+          score += 100 * level;
+          level++;
+          [523, 659, 784].forEach((f, i) => setTimeout(() => sound.beep(f, 0.12, "sine", 0.06), i * 100));
+          buildLevel(level);
+          items = [];
+          resetBall();
+          state = "levelup";
+          setTimeout(() => (state = "play"), 1400);
+        }
+      }
+
+      const ICON = { wide: ["↔️", "#22c55e"], multi: ["⚪", "#38bdf8"], slow: ["🐢", "#facc15"], life: ["❤️", "#ef4444"] };
+      function text(s, x, y, size, color, align = "center") {
+        ctx.font = `800 ${size}px "Segoe UI", sans-serif`;
+        ctx.textAlign = align; ctx.textBaseline = "middle"; ctx.fillStyle = color; ctx.fillText(s, x, y);
+      }
+
+      function draw() {
+        const g = ctx.createLinearGradient(0, 0, 0, H);
+        g.addColorStop(0, "#0b1033"); g.addColorStop(1, "#1e1b4b");
+        ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = "rgba(255,255,255,0.08)"; ctx.fillRect(0, 56, W, 4);
+        for (const k of bricks) {
+          if (k.hp <= 0) continue;
+          ctx.globalAlpha = 0.45 + 0.55 * (k.hp / k.max);
+          ctx.fillStyle = k.col;
+          ctx.beginPath(); ctx.roundRect ? ctx.roundRect(k.x, k.y, BW - 4, BH, 5) : ctx.rect(k.x, k.y, BW - 4, BH); ctx.fill();
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = "rgba(255,255,255,0.3)"; ctx.fillRect(k.x + 4, k.y + 3, BW - 12, 4);
+          if (k.hp > 1) text(String(k.hp), k.x + BW / 2 - 2, k.y + BH / 2 + 1, 12, "rgba(0,0,0,0.6)");
+        }
+        for (const it of items) {
+          const [ic, col] = ICON[it.k];
+          ctx.fillStyle = col + "55"; ctx.beginPath(); ctx.arc(it.x, it.y, 14, 0, Math.PI * 2); ctx.fill();
+          ctx.font = "16px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(ic, it.x, it.y);
+        }
+        // Paddle
+        const py = paddleY();
+        const pg = ctx.createLinearGradient(0, py, 0, py + 14);
+        pg.addColorStop(0, "#e0e7ff"); pg.addColorStop(1, "#6366f1");
+        ctx.fillStyle = pg;
+        ctx.beginPath(); ctx.roundRect ? ctx.roundRect(paddle.x - paddle.w / 2, py, paddle.w, 14, 7) : ctx.rect(paddle.x - paddle.w / 2, py, paddle.w, 14); ctx.fill();
+        for (const b of balls) {
+          ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(b.x, b.y, BR, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "rgba(255,255,255,0.15)"; ctx.beginPath(); ctx.arc(b.x - b.vx * 0.02, b.y - b.vy * 0.02, BR, 0, Math.PI * 2); ctx.fill();
+        }
+        for (const p of parts) { ctx.globalAlpha = Math.max(0, p.life * 2); ctx.fillStyle = p.c; ctx.fillRect(p.x - 2, p.y - 2, 4, 4); }
+        ctx.globalAlpha = 1;
+        text(String(score), 16, 30, 22, "#fff", "left");
+        text(`Level ${level}`, W / 2, 30, 16, "#a5b4fc");
+        text("❤️".repeat(Math.max(0, lives)), W - 14, 30, 15, "#fff", "right");
+        if (balls.some((b) => b.stuck) && state === "play") text(IS_TOUCH ? "Tap = ball chhodo" : "Click / Space = ball chhodo", W / 2, py - 60, 16, "#fde047");
+        if (state === "levelup") text(`🎉 Level ${level}!`, W / 2, H * 0.55, 36, "#fde047");
+        if (state === "over") {
+          ctx.fillStyle = "rgba(0,0,0,0.55)"; ctx.fillRect(0, 0, W, H);
+          text(score >= best && score > 0 ? "🏆 Naya Record!" : "💥 Game Over", W / 2, H * 0.4, 36, "#fff");
+          text(`Score ${score} · Level ${level} · Best ${best}`, W / 2, H * 0.47, 18, "#fde047");
+          text(IS_TOUCH ? "Tap = dobara" : "Click = dobara", W / 2, H * 0.53, 16, "#cbd5e1");
+        }
+      }
+
+      // ---------- Input ----------
+      const keys = {};
+      let targetX = null;
+      window.addEventListener("keydown", (e) => {
+        keys[e.code] = true;
+        if (["ArrowLeft", "ArrowRight", "Space"].includes(e.code)) e.preventDefault();
+        if ((e.code === "Space" || e.code === "Enter") && !e.repeat) launch();
+      });
+      window.addEventListener("keyup", (e) => (keys[e.code] = false));
+      canvas.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        canvas.setPointerCapture(e.pointerId);
+        targetX = canvasPoint(canvas, e, W, H).x;
+        launch();
+      });
+      canvas.addEventListener("pointermove", (e) => {
+        if (e.pointerType === "mouse" || e.buttons) targetX = canvasPoint(canvas, e, W, H).x;
+      });
+      canvas.addEventListener("pointerup", (e) => { if (e.pointerType !== "mouse") targetX = null; });
+
+      let last = performance.now();
+      function loop(now) {
+        const dt = Math.min((now - last) / 1000, 1 / 30);
+        last = now;
+        update(dt);
+        draw();
+        requestAnimationFrame(loop);
+      }
+      document.addEventListener("visibilitychange", () => { last = performance.now(); });
+      const resize = () => ({ H } = fitCanvasFill(canvas, ctx, wrap, W, 680, W, 960));
+      window.addEventListener("resize", resize);
+      resize();
+      reset();
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>

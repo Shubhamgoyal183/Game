@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <script src="../../js/site.js" defer></script>
+  <title>Block Puzzle – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+</head>
+<body class="fullscreen">
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🧱 Block Puzzle</h1>
+    <button class="btn small" id="restartBtn">⟲</button>
+  </header>
+  <main class="stage">
+    <div class="canvas-wrap" id="wrap"><canvas id="game"></canvas></div>
+    <div class="hint">Neeche se block kheencho aur board par chhodo · Poori line = saaf · Ek saath kai line = combo!</div>
+  </main>
+
+  <div class="modal" id="modal">
+    <div class="panel">
+      <h2 id="mTitle"></h2>
+      <p id="mText"></p>
+      <button class="btn primary" id="mBtn"></button>
+    </div>
+  </div>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const N = 8, CELL = 44, W = 400;
+      const BX = (W - N * CELL) / 2, BY = 96;
+      let H = 720;
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const wrap = document.getElementById("wrap");
+      const COLORS = ["#ef4444", "#f97316", "#facc15", "#22c55e", "#06b6d4", "#3b82f6", "#a855f7", "#ec4899"];
+
+      // Aakar: [row, col] ki list
+      const rot = (s) => s.map(([r, c]) => [c, -r]);
+      const norm = (s) => { const mr = Math.min(...s.map((p) => p[0])), mc = Math.min(...s.map((p) => p[1])); return s.map(([r, c]) => [r - mr, c - mc]); };
+      const all4 = (s) => { const out = [norm(s)]; for (let i = 0; i < 3; i++) out.push(norm(rot(out[out.length - 1]))); return out; };
+      const SHAPES = [
+        [[0, 0]],
+        [[0, 0], [0, 1]], [[0, 0], [1, 0]],
+        [[0, 0], [0, 1], [0, 2]], [[0, 0], [1, 0], [2, 0]],
+        [[0, 0], [0, 1], [0, 2], [0, 3]], [[0, 0], [1, 0], [2, 0], [3, 0]],
+        [[0, 0], [0, 1], [0, 2], [0, 3], [0, 4]], [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]],
+        [[0, 0], [0, 1], [1, 0], [1, 1]],
+        [[0, 0], [0, 1], [0, 2], [1, 0], [1, 1], [1, 2], [2, 0], [2, 1], [2, 2]],
+        [[0, 0], [0, 1], [0, 2], [1, 0], [1, 1], [1, 2]], [[0, 0], [0, 1], [1, 0], [1, 1], [2, 0], [2, 1]],
+        ...all4([[0, 0], [1, 0], [1, 1]]),
+        ...all4([[0, 0], [1, 0], [2, 0], [2, 1], [2, 2]]),
+        ...all4([[0, 0], [0, 1], [0, 2], [1, 1]]),
+        ...all4([[0, 0], [1, 0], [2, 0], [2, 1]]),
+        [[0, 0], [0, 1], [1, 1], [1, 2]], [[0, 1], [1, 0], [1, 1], [2, 0]],
+        [[0, 1], [0, 2], [1, 0], [1, 1]], [[0, 0], [1, 0], [1, 1], [2, 1]],
+      ];
+
+      let grid, tray, score, best, combo, drag, clearing, pops, gameOverT;
+      best = store.get("blocks_best", 0);
+
+      function newGame() {
+        grid = Array.from({ length: N }, () => Array(N).fill(null));
+        score = 0; combo = 0; clearing = []; pops = []; gameOverT = 0; drag = null;
+        newTray();
+        hideModal();
+      }
+
+      function newTray() {
+        tray = [0, 1, 2].map(() => {
+          const shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
+          return { shape, color: COLORS[Math.floor(Math.random() * COLORS.length)], used: false };
+        });
+      }
+
+      const fits = (shape, r0, c0) => shape.every(([r, c]) => r0 + r >= 0 && r0 + r < N && c0 + c >= 0 && c0 + c < N && !grid[r0 + r][c0 + c]);
+      const canPlaceAnywhere = (shape) => { for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (fits(shape, r, c)) return true; return false; };
+
+      function place(piece, r0, c0) {
+        piece.shape.forEach(([r, c]) => (grid[r0 + r][c0 + c] = piece.color));
+        piece.used = true;
+        score += piece.shape.length;
+        sound.beep(500, 0.05, "triangle", 0.05);
+        // Poori line check
+        const rows = [], cols = [];
+        for (let i = 0; i < N; i++) {
+          if (grid[i].every(Boolean)) rows.push(i);
+          if (grid.every((row) => row[i])) cols.push(i);
+        }
+        const lines = rows.length + cols.length;
+        if (lines) {
+          combo++;
+          const gained = lines * 10 * lines * combo;
+          score += gained;
+          const cells = new Set();
+          rows.forEach((r) => { for (let c = 0; c < N; c++) cells.add(r * N + c); });
+          cols.forEach((c) => { for (let r = 0; r < N; r++) cells.add(r * N + c); });
+          for (const k of cells) { const r = Math.floor(k / N), c = k % N; clearing.push({ r, c, color: grid[r][c], t: 0 }); grid[r][c] = null; }
+          pops.push({ text: lines > 1 || combo > 1 ? `+${gained}  ${lines > 1 ? lines + " lines!" : ""}${combo > 1 ? " Combo x" + combo : ""}` : `+${gained}`, t: 1.2 });
+          [660, 880, 1100].slice(0, Math.min(3, lines)).forEach((f, i) => setTimeout(() => sound.beep(f, 0.12, "sine", 0.07), i * 80));
+          if (navigator.vibrate) navigator.vibrate(30);
+        } else combo = 0;
+        if (tray.every((p) => p.used)) newTray();
+        if (score > best) { best = score; store.set("blocks_best", best); }
+        if (!tray.some((p) => !p.used && canPlaceAnywhere(p.shape))) { gameOverT = 0.01; sound.beep(200, 0.5, "triangle", 0.06, 80); }
+      }
+
+      // ---------- Tray positions ----------
+      const trayY = () => BY + N * CELL + 40 + Math.max(0, (H - 720) * 0.4);
+      const slotX = (i) => W / 6 + (i * W) / 3;
+      const MINI = 22;
+      function shapeSize(s) { return [Math.max(...s.map((p) => p[0])) + 1, Math.max(...s.map((p) => p[1])) + 1]; }
+
+      // ---------- Draw ----------
+      function block(x, y, size, color, alpha = 1) {
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x + 1.5, y + 1.5, size - 3, size - 3, size * 0.18) : ctx.rect(x + 1.5, y + 1.5, size - 3, size - 3); ctx.fill();
+        ctx.fillStyle = "rgba(255,255,255,0.3)"; ctx.fillRect(x + size * 0.18, y + size * 0.14, size * 0.64, size * 0.14);
+        ctx.fillStyle = "rgba(0,0,0,0.18)"; ctx.fillRect(x + size * 0.12, y + size * 0.78, size * 0.76, size * 0.1);
+        ctx.globalAlpha = 1;
+      }
+
+      function hover() {
+        if (!drag) return null;
+        const [hr, hc] = shapeSize(drag.piece.shape);
+        const x = drag.x - (hc * CELL) / 2, y = drag.y - (hr * CELL) / 2;
+        const c0 = Math.round((x - BX) / CELL), r0 = Math.round((y - BY) / CELL);
+        return fits(drag.piece.shape, r0, c0) ? { r0, c0 } : null;
+      }
+
+      function text(s, x, y, size, color, align = "center") {
+        ctx.font = `800 ${size}px "Segoe UI", sans-serif`;
+        ctx.textAlign = align; ctx.textBaseline = "middle"; ctx.fillStyle = color; ctx.fillText(s, x, y);
+      }
+
+      function draw(dt) {
+        ctx.fillStyle = "#0f1020"; ctx.fillRect(0, 0, W, H);
+        text(String(score), W / 2, 44, 40, "#fff");
+        text(`🏆 ${best}`, W - 20, 30, 16, "#fde047", "right");
+        // Board
+        ctx.fillStyle = "#1b1d40";
+        ctx.beginPath(); ctx.roundRect ? ctx.roundRect(BX - 8, BY - 8, N * CELL + 16, N * CELL + 16, 14) : ctx.rect(BX - 8, BY - 8, N * CELL + 16, N * CELL + 16); ctx.fill();
+        const hv = hover();
+        // Jo line bharne wali hai use chamkao
+        let previewRows = [], previewCols = [];
+        if (hv) {
+          const tmp = grid.map((r) => r.slice());
+          drag.piece.shape.forEach(([r, c]) => (tmp[hv.r0 + r][hv.c0 + c] = "x"));
+          for (let i = 0; i < N; i++) { if (tmp[i].every(Boolean)) previewRows.push(i); if (tmp.every((row) => row[i])) previewCols.push(i); }
+        }
+        for (let r = 0; r < N; r++)
+          for (let c = 0; c < N; c++) {
+            const x = BX + c * CELL, y = BY + r * CELL;
+            ctx.fillStyle = (r + c) % 2 ? "#24275a" : "#2a2d63";
+            ctx.fillRect(x + 1, y + 1, CELL - 2, CELL - 2);
+            if (grid[r][c]) block(x, y, CELL, (previewRows.includes(r) || previewCols.includes(c)) ? "#fde047" : grid[r][c]);
+          }
+        if (hv) drag.piece.shape.forEach(([r, c]) => block(BX + (hv.c0 + c) * CELL, BY + (hv.r0 + r) * CELL, CELL, drag.piece.color, 0.45));
+        // Saaf hote block
+        for (const k of clearing) {
+          k.t += dt;
+          const s = Math.max(0, 1 - k.t * 3);
+          if (s <= 0) continue;
+          const x = BX + k.c * CELL + (CELL * (1 - s)) / 2, y = BY + k.r * CELL + (CELL * (1 - s)) / 2;
+          block(x, y, CELL * s, k.color);
+        }
+        clearing = clearing.filter((k) => k.t < 0.34);
+        // Tray
+        const ty = trayY();
+        tray.forEach((p, i) => {
+          if (p.used || (drag && drag.idx === i)) return;
+          const [hr, hc] = shapeSize(p.shape);
+          const ok = canPlaceAnywhere(p.shape);
+          p.shape.forEach(([r, c]) => block(slotX(i) - (hc * MINI) / 2 + c * MINI, ty - (hr * MINI) / 2 + r * MINI, MINI, ok ? p.color : "#4b5563"));
+        });
+        if (drag) {
+          const [hr, hc] = shapeSize(drag.piece.shape);
+          drag.piece.shape.forEach(([r, c]) => block(drag.x - (hc * CELL) / 2 + c * CELL, drag.y - (hr * CELL) / 2 + r * CELL, CELL, drag.piece.color, 0.9));
+        }
+        for (const p of pops) {
+          p.t -= dt;
+          ctx.globalAlpha = Math.max(0, Math.min(1, p.t * 2));
+          text(p.text, W / 2, BY + (N * CELL) / 2 - (1.2 - p.t) * 40, 26, "#fde047");
+          ctx.globalAlpha = 1;
+        }
+        pops = pops.filter((p) => p.t > 0);
+        if (gameOverT > 0) {
+          gameOverT += dt;
+          if (gameOverT > 0.8 && !document.getElementById("modal").classList.contains("show"))
+            showModal(score >= best && score > 0 ? "🏆 Naya Record!" : "😵 Jagah khatam!", `Score: ${score} · Best: ${best}`, "Naya game", newGame);
+        }
+      }
+
+      // ---------- Input ----------
+      canvas.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        sound.unlock();
+        if (gameOverT > 0) return;
+        const p = canvasPoint(canvas, e, W, H);
+        const ty = trayY();
+        if (Math.abs(p.y - ty) > 70) return;
+        const i = Math.max(0, Math.min(2, Math.floor((p.x / W) * 3)));
+        if (tray[i].used) return;
+        canvas.setPointerCapture(e.pointerId);
+        // Ungli ke upar dikhao taaki block chhupe nahi
+        drag = { idx: i, piece: tray[i], x: p.x, y: p.y - 70 };
+        sound.beep(400, 0.03, "triangle", 0.03);
+      });
+      canvas.addEventListener("pointermove", (e) => {
+        if (!drag) return;
+        const p = canvasPoint(canvas, e, W, H);
+        drag.x = p.x; drag.y = p.y - 70;
+      });
+      const drop = () => {
+        if (!drag) return;
+        const hv = hover();
+        const piece = drag.piece;
+        drag = null;
+        if (hv) place(piece, hv.r0, hv.c0);
+      };
+      canvas.addEventListener("pointerup", drop);
+      canvas.addEventListener("pointercancel", () => (drag = null));
+      document.getElementById("restartBtn").addEventListener("click", newGame);
+
+      let last = performance.now();
+      function loop(now) {
+        const dt = Math.min((now - last) / 1000, 1 / 30);
+        last = now;
+        draw(dt);
+        requestAnimationFrame(loop);
+      }
+      const resize = () => ({ H } = fitCanvasFill(canvas, ctx, wrap, W, 640, W, 820));
+      window.addEventListener("resize", resize);
+      resize();
+      newGame();
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>

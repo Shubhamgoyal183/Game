@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "119680743576",
+    "project_id": "game-zone-e5040",
+    "storage_bucket": "game-zone-e5040.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:119680743576:android:76392c26e9694476f178ed",
+        "android_client_info": {
+          "package_name": "com.shubhamgoyal.gamezone"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "119680743576-vdvenj8gi7trcdmbd934rj3unbiivcd3.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.shubhamgoyal.gamezone",
+            "certificate_hash": "421169eedfa5674315955774f4d2fb2007d78f54"
+          }
+        },
+        {
+          "client_id": "119680743576-qgfg1i4vaesfa7jm2voqri6snlffnd19.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAgCPaMpBl6muZiJjLvc0KoDybpQI13t08"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "119680743576-qgfg1i4vaesfa7jm2voqri6snlffnd19.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

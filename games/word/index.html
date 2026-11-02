@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <script src="../../js/site.js" defer></script>
+  <title>Word Game – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+  <style>
+    body { user-select: none; -webkit-user-select: none; }
+    main.stage { gap: 10px; justify-content: space-between; }
+    .board { display: grid; grid-template-rows: repeat(6, 1fr); gap: 6px; width: min(80vw, 330px, calc((100dvh - 330px) * 0.83)); min-width: 220px; aspect-ratio: 5 / 6; }
+    .rowg { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+    .rowg.shake { animation: shake 0.4s; }
+    @keyframes shake { 20%, 60% { transform: translateX(-8px); } 40%, 80% { transform: translateX(8px); } }
+    .tile { border: 2px solid #3f4373; border-radius: 6px; display: grid; place-items: center; font: 800 clamp(1.3rem, 7vw, 2rem) "Segoe UI", sans-serif; text-transform: uppercase; }
+    .tile.filled { border-color: #8b8fc7; animation: pop 0.1s; }
+    .tile.g { background: #16a34a; border-color: #16a34a; } .tile.y { background: #ca8a04; border-color: #ca8a04; } .tile.x { background: #3f4253; border-color: #3f4253; }
+    .tile.flip { animation: flip 0.5s ease both; }
+    @keyframes pop { 50% { transform: scale(1.1); } }
+    @keyframes flip { 0% { transform: rotateX(0); } 50% { transform: rotateX(90deg); } 100% { transform: rotateX(0); } }
+    .kb { display: flex; flex-direction: column; gap: 6px; width: min(98vw, 500px); }
+    .kr { display: flex; gap: 5px; justify-content: center; }
+    .k { flex: 1; max-width: 44px; height: 54px; border: none; border-radius: 7px; background: #5b5f97; color: #fff; font: 800 1rem "Segoe UI", sans-serif; text-transform: uppercase; cursor: pointer; touch-action: manipulation; }
+    .k.wide { max-width: 68px; flex: 1.5; font-size: 0.75rem; }
+    .k.g { background: #16a34a; } .k.y { background: #ca8a04; } .k.x { background: #2a2c3d; color: #8b8fa8; }
+    .toast { min-height: 1.6em; font-weight: 700; }
+  </style>
+</head>
+<body class="fullscreen">
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🔤 Word Game</h1>
+    <span class="spacer"></span>
+  </header>
+  <main class="stage">
+    <div class="row" id="modeRow">
+      <button class="btn small" data-mode="daily">📅 Aaj ka shabd</button>
+      <button class="btn small" data-mode="free">♾️ Practice</button>
+    </div>
+    <div class="toast" id="toast">5 akshar ka English shabd 6 koshish mein dhoondho</div>
+    <div class="board" id="board"></div>
+    <div class="kb" id="kb"></div>
+    <div class="hint">🟩 sahi jagah · 🟨 shabd mein hai, jagah galat · ⬛ shabd mein nahi</div>
+  </main>
+
+  <div class="modal" id="modal">
+    <div class="panel">
+      <h2 id="mTitle"></h2>
+      <p id="mText"></p>
+      <button class="btn primary" id="mBtn"></button>
+    </div>
+  </div>
+
+  <script src="../../js/common.js"></script>
+  <script src="words.js"></script>
+  <script>
+    (() => {
+      const $ = (id) => document.getElementById(id);
+      const WORDS = window.WORDS;
+      let mode = store.get("word_mode", "daily");
+      let answer, rows, cur, done, keyState;
+
+      // Board + keyboard
+      $("board").innerHTML = Array.from({ length: 6 }, () => `<div class="rowg">${'<div class="tile"></div>'.repeat(5)}</div>`).join("");
+      const KEYS = ["qwertyuiop", "asdfghjkl", "⏎zxcvbnm⌫"];
+      $("kb").innerHTML = KEYS.map((r) => `<div class="kr">${[...r].map((k) => `<button class="k${k === "⏎" || k === "⌫" ? " wide" : ""}" data-k="${k}">${k === "⏎" ? "ENTER" : k}</button>`).join("")}</div>`).join("");
+      document.querySelectorAll(".k").forEach((b) => b.addEventListener("click", () => press(b.dataset.k)));
+
+      const dayNo = () => Math.floor((Date.now() - new Date(2026, 0, 1).getTime()) / 86400000);
+
+      function newGame() {
+        hideModal();
+        if (mode === "daily") {
+          // Roz ek hi shabd (sabke liye same), din ke hisaab se
+          answer = WORDS[(dayNo() * 7919) % WORDS.length];
+          const saved = store.get("word_daily", null);
+          rows = saved && saved.day === dayNo() ? saved.rows : [];
+        } else {
+          answer = WORDS[Math.floor(Math.random() * WORDS.length)];
+          rows = [];
+        }
+        cur = "";
+        done = false;
+        keyState = {};
+        rows.forEach((g) => score(g).forEach((s, i) => upKey(g[i], s)));
+        if (rows.length && (rows[rows.length - 1] === answer || rows.length >= 6)) done = true;
+        render();
+        toast(done ? "Aaj ka shabd ho gaya — kal naya aayega! Practice khelo 🙂" : mode === "daily" ? "📅 Aaj ka shabd — sabke liye same!" : "♾️ Practice mode");
+      }
+
+      // g = sahi jagah, y = shabd mein hai, x = nahi (dohre akshar sahi gine jaate hain)
+      function score(guess) {
+        const res = Array(5).fill("x"), left = {};
+        for (let i = 0; i < 5; i++) {
+          if (guess[i] === answer[i]) res[i] = "g";
+          else left[answer[i]] = (left[answer[i]] || 0) + 1;
+        }
+        for (let i = 0; i < 5; i++) if (res[i] !== "g" && left[guess[i]]) { res[i] = "y"; left[guess[i]]--; }
+        return res;
+      }
+      const RANK = { x: 1, y: 2, g: 3 };
+      const upKey = (k, s) => { if (!keyState[k] || RANK[s] > RANK[keyState[k]]) keyState[k] = s; };
+
+      function render(flipRow = -1) {
+        const rowEls = document.querySelectorAll(".rowg");
+        rowEls.forEach((rowEl, r) => {
+          const tiles = rowEl.children;
+          const word = r < rows.length ? rows[r] : r === rows.length ? cur : "";
+          const sc = r < rows.length ? score(rows[r]) : null;
+          for (let i = 0; i < 5; i++) {
+            const t = tiles[i];
+            t.textContent = word[i] || "";
+            t.className = "tile" + (word[i] ? " filled" : "");
+            if (sc) {
+              if (r === flipRow) {
+                t.style.animationDelay = i * 0.18 + "s";
+                t.classList.add("flip");
+                setTimeout(() => t.classList.add(sc[i]), i * 180 + 250);
+              } else t.classList.add(sc[i]);
+            }
+          }
+        });
+        const apply = () => document.querySelectorAll(".k").forEach((b) => { b.classList.remove("g", "y", "x"); if (keyState[b.dataset.k]) b.classList.add(keyState[b.dataset.k]); });
+        flipRow >= 0 ? setTimeout(apply, 1100) : apply();
+      }
+
+      function toast(t) { $("toast").textContent = t; }
+
+      function press(k) {
+        if (done) return;
+        sound.unlock();
+        if (k === "⌫") cur = cur.slice(0, -1);
+        else if (k === "⏎") return submit();
+        else if (cur.length < 5 && /^[a-z]$/.test(k)) { cur += k; sound.beep(600, 0.02, "triangle", 0.02); }
+        render();
+      }
+
+      function submit() {
+        if (cur.length < 5) {
+          const r = document.querySelectorAll(".rowg")[rows.length];
+          r.classList.remove("shake"); void r.offsetWidth; r.classList.add("shake");
+          return toast("5 akshar poore karo");
+        }
+        rows.push(cur);
+        const g = cur;
+        cur = "";
+        score(g).forEach((s, i) => upKey(g[i], s));
+        render(rows.length - 1);
+        if (mode === "daily") store.set("word_daily", { day: dayNo(), rows });
+        [0, 1, 2, 3, 4].forEach((i) => setTimeout(() => sound.beep(400 + i * 80, 0.05, "sine", 0.04), i * 180 + 250));
+        const win = g === answer, lose = !win && rows.length >= 6;
+        if (!win && !lose) return toast(`${6 - rows.length} koshish bachi`);
+        done = true;
+        const st = store.get("word_stats", { played: 0, won: 0, streak: 0, best: 0 });
+        st.played++;
+        if (win) { st.won++; st.streak++; st.best = Math.max(st.best, st.streak); } else st.streak = 0;
+        store.set("word_stats", st);
+        const praise = ["🤯 Genius!", "🔥 Shaandaar!", "🎉 Bahut badhiya!", "👍 Achha!", "😅 Bach gaye!", "😮‍💨 Phew!"][rows.length - 1];
+        setTimeout(() => {
+          if (win) [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => sound.beep(f, 0.15, "sine", 0.07), i * 110));
+          showModal(win ? praise : "😢 Is baar nahi", `Shabd tha: ${answer.toUpperCase()} · Jeete ${st.won}/${st.played} · Streak 🔥 ${st.streak}`,
+            mode === "daily" ? "♾️ Practice khelo" : "Agla shabd", () => { if (mode === "daily") setMode("free"); else newGame(); });
+        }, 1300);
+      }
+
+      window.addEventListener("keydown", (e) => {
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        if (e.key === "Enter") press("⏎");
+        else if (e.key === "Backspace") press("⌫");
+        else if (/^[a-zA-Z]$/.test(e.key)) press(e.key.toLowerCase());
+      });
+      function setMode(m) {
+        mode = m;
+        store.set("word_mode", m);
+        document.querySelectorAll("#modeRow .btn").forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
+        document.activeElement && document.activeElement.blur();
+        newGame();
+      }
+      document.querySelectorAll("#modeRow .btn").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+      setMode(mode);
+    })();
+  </script>
+</body>
+</html>

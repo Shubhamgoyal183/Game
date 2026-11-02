@@ -1,0 +1,25 @@
+{
+  "name": "gamezone-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Game Zone by Shubham Goyal - Android app (Capacitor)",
+  "scripts": {
+    "copy-web": "node scripts/copy-web.js",
+    "sync": "node scripts/copy-web.js && npx cap sync android",
+    "apk": "node scripts/build-apk.js",
+    "firebase": "esbuild src/firebase-entry.js --bundle --minify --format=iife --target=es2019 --outfile=../js/vendor/firebase.js --legal-comments=none"
+  },
+  "dependencies": {
+    "@capacitor-firebase/authentication": "^6.3.1",
+    "@capacitor/android": "^6.2.1",
+    "@capacitor/app": "^6.0.2",
+    "@capacitor/cli": "^6.2.1",
+    "@capacitor/core": "^6.2.1",
+    "@capacitor/splash-screen": "^6.0.3",
+    "@capacitor/status-bar": "^6.0.2",
+    "firebase": "^11.0.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  }
+}

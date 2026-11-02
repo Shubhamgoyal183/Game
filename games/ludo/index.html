@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <script src="../../js/site.js" defer></script>
+  <title>Ludo – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+  <style>
+    .setup { position: fixed; inset: 0; z-index: 45; background: rgba(11, 12, 29, 0.97); display: grid; place-items: center; padding: 16px; overflow-y: auto; }
+    .setup[hidden] { display: none; }
+    .setup .panel { display: flex; flex-direction: column; gap: 14px; text-align: center; }
+    .seat { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--card-2); border-radius: 12px; padding: 8px 12px; }
+    .seat b { display: flex; align-items: center; gap: 8px; }
+    .seat i { width: 18px; height: 18px; border-radius: 50%; display: inline-block; }
+    .seat.off { opacity: 0.35; }
+  </style>
+</head>
+<body class="fullscreen">
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🎲 Ludo</h1>
+    <button class="btn small" id="setupBtn">⚙️</button>
+  </header>
+  <main class="stage">
+    <div class="canvas-wrap" id="wrap"><canvas id="game"></canvas></div>
+    <div class="hint" id="hint">Dice par tap karo · Chamakti goti chuno · 6 = goti bahar · ⭐ = safe</div>
+  </main>
+
+  <div class="setup" id="setup">
+    <div class="panel">
+      <h2>🎲 Ludo — kitne players?</h2>
+      <div class="row" id="countRow">
+        <button class="btn" data-n="2">2</button>
+        <button class="btn" data-n="3">3</button>
+        <button class="btn" data-n="4">4</button>
+      </div>
+      <div id="seats"></div>
+      <button class="btn primary" id="startBtn">▶ Khel shuru karo</button>
+    </div>
+  </div>
+
+  <div class="modal" id="modal">
+    <div class="panel">
+      <h2 id="mTitle"></h2>
+      <p id="mText"></p>
+      <button class="btn primary" id="mBtn"></button>
+    </div>
+  </div>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const S = 40, W = 600, H = 740, BOARD = 600;
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const wrap = document.getElementById("wrap");
+      const $ = (id) => document.getElementById(id);
+
+      // ---------- Board ka naksha (15x15 khaane) ----------
+      const TRACK = [
+        [1, 6], [2, 6], [3, 6], [4, 6], [5, 6], [6, 5], [6, 4], [6, 3], [6, 2], [6, 1], [6, 0], [7, 0], [8, 0],
+        [8, 1], [8, 2], [8, 3], [8, 4], [8, 5], [9, 6], [10, 6], [11, 6], [12, 6], [13, 6], [14, 6], [14, 7], [14, 8],
+        [13, 8], [12, 8], [11, 8], [10, 8], [9, 8], [8, 9], [8, 10], [8, 11], [8, 12], [8, 13], [8, 14], [7, 14], [6, 14],
+        [6, 13], [6, 12], [6, 11], [6, 10], [6, 9], [5, 8], [4, 8], [3, 8], [2, 8], [1, 8], [0, 8], [0, 7], [0, 6],
+      ];
+      const COLORS = [
+        { name: "Red", c: "#ef4444", d: "#991b1b", start: 0, yard: [0, 0], home: [[1, 7], [2, 7], [3, 7], [4, 7], [5, 7]] },
+        { name: "Green", c: "#22c55e", d: "#166534", start: 13, yard: [9, 0], home: [[7, 1], [7, 2], [7, 3], [7, 4], [7, 5]] },
+        { name: "Yellow", c: "#facc15", d: "#a16207", start: 26, yard: [9, 9], home: [[13, 7], [12, 7], [11, 7], [10, 7], [9, 7]] },
+        { name: "Blue", c: "#3b82f6", d: "#1e3a8a", start: 39, yard: [0, 9], home: [[7, 13], [7, 12], [7, 11], [7, 10], [7, 9]] },
+      ];
+      const SAFE = new Set([0, 8, 13, 21, 26, 34, 39, 47]);
+      const FINISH = 56;
+
+      // ---------- Setup ----------
+      let setup = store.get("ludo_setup", { n: 2, cpu: [false, true, true, true] });
+      const seatsFor = (n) => (n === 2 ? [0, 2] : n === 3 ? [0, 1, 2] : [0, 1, 2, 3]);
+      function renderSetup() {
+        document.querySelectorAll("#countRow .btn").forEach((b) => b.classList.toggle("active", +b.dataset.n === setup.n));
+        const on = seatsFor(setup.n);
+        $("seats").innerHTML = COLORS.map((col, i) => `
+          <div class="seat ${on.includes(i) ? "" : "off"}">
+            <b><i style="background:${col.c}"></i>${col.name}</b>
+            <button class="btn small ${setup.cpu[i] ? "" : "active"}" data-seat="${i}" ${on.includes(i) ? "" : "disabled"}>${setup.cpu[i] ? "🤖 Computer" : "👤 Insaan"}</button>
+          </div>`).join("");
+        document.querySelectorAll("[data-seat]").forEach((b) => (b.onclick = () => { setup.cpu[+b.dataset.seat] = !setup.cpu[+b.dataset.seat]; renderSetup(); }));
+      }
+      document.querySelectorAll("#countRow .btn").forEach((b) => (b.onclick = () => { setup.n = +b.dataset.n; renderSetup(); }));
+      $("startBtn").onclick = () => { store.set("ludo_setup", setup); $("setup").hidden = true; sound.unlock(); newGame(); };
+      $("setupBtn").onclick = () => { renderSetup(); $("setup").hidden = false; };
+
+      // ---------- Game state ----------
+      let players, turnIdx, dice, rolling, phase, sixes, msg, ranks, anim, pulse = 0;
+
+      function newGame() {
+        players = seatsFor(setup.n).map((ci) => ({ ci, cpu: setup.cpu[ci], tokens: [-1, -1, -1, -1], done: false }));
+        turnIdx = 0;
+        dice = 1;
+        rolling = 0;
+        phase = "roll";
+        sixes = 0;
+        ranks = [];
+        anim = null;
+        say(`${who()} ki baari — dice dabao`);
+        hideModal();
+        maybeCpu();
+      }
+
+      const cur = () => players[turnIdx];
+      const who = (p = cur()) => (p.cpu ? `🤖 ${COLORS[p.ci].name}` : COLORS[p.ci].name);
+      function say(t) { msg = t; }
+      const absOf = (p, pos) => (COLORS[p.ci].start + pos) % 52;
+
+      function movable(p, d) {
+        return p.tokens.map((pos, k) => ((pos === -1 && d === 6) || (pos >= 0 && pos + d <= FINISH) ? k : -1)).filter((k) => k >= 0);
+      }
+
+      // ---------- Dice ----------
+      function roll() {
+        if (phase !== "roll") return;
+        phase = "rolling";
+        rolling = 0.6;
+        sound.beep(300, 0.05, "square", 0.04);
+      }
+
+      function afterRoll() {
+        const p = cur();
+        if (dice === 6) sixes++;
+        else sixes = 0;
+        if (sixes === 3) {
+          say(`😬 ${who()}: teen baar 6 — baari gayi!`);
+          sixes = 0;
+          return setTimeout(nextTurn, 1000);
+        }
+        const opts = movable(p, dice);
+        if (!opts.length) {
+          say(`${who()}: ${dice} aaya — koi chaal nahi`);
+          return setTimeout(nextTurn, 900);
+        }
+        phase = "move";
+        // Sab goti ek hi jagah ho toh khud chal do
+        const samePos = new Set(opts.map((k) => p.tokens[k])).size === 1;
+        if (p.cpu) return setTimeout(() => moveToken(cpuPick(p, opts)), 500);
+        if (samePos) return setTimeout(() => moveToken(opts[0]), 350);
+        say(`${who()}: ${dice} aaya — goti chuno`);
+      }
+
+      // ---------- Chalna ----------
+      function moveToken(k) {
+        if (phase !== "move") return;
+        const p = cur();
+        const from = p.tokens[k];
+        const to = from === -1 ? 0 : from + dice;
+        phase = "anim";
+        const path = from === -1 ? [0] : Array.from({ length: dice }, (_, i) => from + i + 1);
+        anim = { p, k, path, i: 0, t: 0 };
+      }
+
+      function landed(p, k) {
+        const pos = p.tokens[k];
+        let extra = dice === 6;
+        if (pos === FINISH) {
+          extra = true;
+          sound.beep(880, 0.15, "sine", 0.07);
+          if (p.tokens.every((x) => x === FINISH)) {
+            p.done = true;
+            ranks.push(p);
+            say(`🏆 ${who(p)} ke saare goti ghar! Rank ${ranks.length}`);
+            const left = players.filter((q) => !q.done);
+            if (left.length <= 1) { if (left[0]) ranks.push(left[0]); return gameOver(); }
+            return setTimeout(nextTurn, 1200);
+          }
+        } else if (pos <= 50) {
+          const a = absOf(p, pos);
+          if (!SAFE.has(a)) {
+            for (const q of players) {
+              if (q === p) continue;
+              q.tokens.forEach((qp, j) => {
+                if (qp >= 0 && qp <= 50 && absOf(q, qp) === a) {
+                  q.tokens[j] = -1;
+                  extra = true;
+                  say(`💥 ${who(p)} ne ${COLORS[q.ci].name} ki goti kaati!`);
+                  sound.beep(160, 0.3, "sawtooth", 0.07, 60);
+                  if (navigator.vibrate) navigator.vibrate(80);
+                }
+              });
+            }
+          }
+        }
+        if (extra) {
+          phase = "roll";
+          if (!msg.startsWith("💥")) say(`${who(p)}: ek aur baari!`);
+          maybeCpu();
+        } else nextTurn();
+      }
+
+      function nextTurn() {
+        sixes = 0;
+        do turnIdx = (turnIdx + 1) % players.length;
+        while (players[turnIdx].done);
+        phase = "roll";
+        say(`${who()} ki baari${cur().cpu ? "" : " — dice dabao"}`);
+        maybeCpu();
+      }
+
+      function maybeCpu() {
+        if (phase === "roll" && cur().cpu) setTimeout(() => cur().cpu && roll(), 650);
+      }
+
+      // Computer: kaatna > ghar > bahar nikalna > safe jagah > aage badhna; khatre se bacho
+      function cpuPick(p, opts) {
+        let best = opts[0], bestSc = -1e9;
+        for (const k of opts) {
+          const from = p.tokens[k], to = from === -1 ? 0 : from + dice;
+          let sc = to;
+          if (to === FINISH) sc += 120;
+          if (from === -1) sc += 70;
+          if (to <= 50) {
+            const a = absOf(p, to);
+            if (SAFE.has(a)) sc += 35;
+            else {
+              for (const q of players) if (q !== p) for (const qp of q.tokens) {
+                if (qp < 0 || qp > 50) continue;
+                const qa = absOf(q, qp);
+                if (qa === a) sc += 150; // kaat sakte hain
+                const behind = (a - qa + 52) % 52;
+                if (behind >= 1 && behind <= 6) sc -= 45; // pichhe dushman
+              }
+            }
+            if (from >= 0 && from <= 50 && SAFE.has(absOf(p, from))) sc -= 15;
+          } else if (to > 50) sc += 40; // ghar ki line safe hai
+          if (sc > bestSc) { bestSc = sc; best = k; }
+        }
+        return best;
+      }
+
+      function gameOver() {
+        phase = "over";
+        const lines = ranks.map((p, i) => `${["🥇", "🥈", "🥉", "4️⃣"][i]} ${who(p)}`).join("   ");
+        [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => sound.beep(f, 0.15, "sine", 0.07), i * 120));
+        setTimeout(() => showModal(`🏆 ${who(ranks[0])} jeeta!`, lines, "Naya game", newGame), 600);
+      }
+
+      // ---------- Positions ----------
+      function tokenXY(p, k) {
+        const pos = p.tokens[k], col = COLORS[p.ci];
+        if (pos === -1) {
+          const [ox, oy] = col.yard;
+          return { x: (ox + 2 + (k % 2) * 2) * S, y: (oy + 2 + Math.floor(k / 2) * 2) * S };
+        }
+        if (pos <= 50) { const [c, r] = TRACK[absOf(p, pos)]; return { x: (c + 0.5) * S, y: (r + 0.5) * S }; }
+        if (pos < FINISH) { const [c, r] = col.home[pos - 51]; return { x: (c + 0.5) * S, y: (r + 0.5) * S }; }
+        const off = [[-1, 0], [0, -1], [1, 0], [0, 1]][p.ci];
+        return { x: 7.5 * S + off[0] * 0.85 * S + ((k % 2) - 0.5) * 12 * (off[1] ? 1 : 0), y: 7.5 * S + off[1] * 0.85 * S + ((k % 2) - 0.5) * 12 * (off[0] ? 1 : 0) };
+      }
+
+      // ---------- Update ----------
+      function update(dt) {
+        pulse += dt;
+        if (phase === "rolling") {
+          rolling -= dt;
+          if (Math.random() < 0.5) dice = 1 + Math.floor(Math.random() * 6);
+          if (rolling <= 0) {
+            dice = 1 + Math.floor(Math.random() * 6);
+            sound.beep(500 + dice * 60, 0.08, "triangle", 0.06);
+            afterRoll();
+          }
+        }
+        if (anim) {
+          anim.t += dt;
+          if (anim.t >= 0.13) {
+            anim.t = 0;
+            anim.p.tokens[anim.k] = anim.path[anim.i++];
+            sound.beep(700, 0.03, "square", 0.03);
+            if (anim.i >= anim.path.length) {
+              const a = anim;
+              anim = null;
+              landed(a.p, a.k);
+            }
+          }
+        }
+      }
+
+      // ---------- Draw ----------
+      function cell(c, r, fill) {
+        ctx.fillStyle = fill;
+        ctx.fillRect(c * S, r * S, S, S);
+        ctx.strokeStyle = "#9ca3af";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(c * S + 0.5, r * S + 0.5, S - 1, S - 1);
+      }
+
+      function star(x, y, r, fill) {
+        ctx.fillStyle = fill;
+        ctx.beginPath();
+        for (let i = 0; i < 10; i++) { const a = (i * Math.PI) / 5 - Math.PI / 2, rr = i % 2 ? r * 0.45 : r; ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); }
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      function drawBoard() {
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, BOARD, BOARD);
+        TRACK.forEach(([c, r], i) => {
+          const owner = COLORS.find((col) => col.start === i);
+          cell(c, r, owner ? owner.c : "#fff");
+          if (SAFE.has(i) && !owner) star((c + 0.5) * S, (r + 0.5) * S, S * 0.32, "#9ca3af");
+          if (owner) star((c + 0.5) * S, (r + 0.5) * S, S * 0.3, "rgba(255,255,255,0.7)");
+        });
+        for (const col of COLORS) {
+          col.home.forEach(([c, r]) => cell(c, r, col.c));
+          const [ox, oy] = col.yard;
+          ctx.fillStyle = col.c;
+          ctx.fillRect(ox * S, oy * S, 6 * S, 6 * S);
+          ctx.fillStyle = "#fff";
+          ctx.beginPath(); ctx.roundRect ? ctx.roundRect((ox + 0.8) * S, (oy + 0.8) * S, 4.4 * S, 4.4 * S, 16) : ctx.rect((ox + 0.8) * S, (oy + 0.8) * S, 4.4 * S, 4.4 * S); ctx.fill();
+          for (let k = 0; k < 4; k++) {
+            ctx.fillStyle = col.c + "55";
+            ctx.beginPath(); ctx.arc((ox + 2 + (k % 2) * 2) * S, (oy + 2 + Math.floor(k / 2) * 2) * S, S * 0.55, 0, Math.PI * 2); ctx.fill();
+          }
+        }
+        // Beech ka ghar (4 tikone)
+        const cx = 7.5 * S, cy = 7.5 * S;
+        const tri = (pts, fill) => { ctx.fillStyle = fill; ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x * S, y * S) : ctx.moveTo(x * S, y * S))); ctx.closePath(); ctx.fill(); };
+        tri([[6, 6], [6, 9], [7.5, 7.5]], COLORS[0].c);
+        tri([[6, 6], [9, 6], [7.5, 7.5]], COLORS[1].c);
+        tri([[9, 6], [9, 9], [7.5, 7.5]], COLORS[2].c);
+        tri([[6, 9], [9, 9], [7.5, 7.5]], COLORS[3].c);
+        ctx.strokeStyle = "#374151";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(1, 1, BOARD - 2, BOARD - 2);
+      }
+
+      function drawToken(x, y, col, glow) {
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.beginPath(); ctx.ellipse(x + 2, y + 5, S * 0.33, S * 0.18, 0, 0, Math.PI * 2); ctx.fill();
+        if (glow) {
+          ctx.strokeStyle = `rgba(17,24,39,${0.5 + Math.sin(pulse * 8) * 0.4})`;
+          ctx.lineWidth = 4;
+          ctx.beginPath(); ctx.arc(x, y, S * 0.46, 0, Math.PI * 2); ctx.stroke();
+        }
+        ctx.fillStyle = col.d;
+        ctx.beginPath(); ctx.arc(x, y, S * 0.36, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = col.c;
+        ctx.beginPath(); ctx.arc(x, y - 2, S * 0.3, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "rgba(255,255,255,0.85)";
+        ctx.beginPath(); ctx.arc(x, y - 2, S * 0.12, 0, Math.PI * 2); ctx.fill();
+      }
+
+      function drawTokens() {
+        const opts = phase === "move" && !cur().cpu ? movable(cur(), dice) : [];
+        // Ek khaane par kai goti ho toh thoda khiskao
+        const groups = {};
+        players.forEach((p) => p.tokens.forEach((_, k) => {
+          const xy = tokenXY(p, k);
+          const key = Math.round(xy.x) + "," + Math.round(xy.y);
+          (groups[key] = groups[key] || []).push({ p, k, xy });
+        }));
+        for (const list of Object.values(groups)) {
+          list.forEach(({ p, k, xy }, i) => {
+            const n = list.length, off = n > 1 ? (i - (n - 1) / 2) * 8 : 0;
+            drawToken(xy.x + off, xy.y - (n > 1 ? Math.abs(off) * 0.3 : 0), COLORS[p.ci], p === cur() && opts.includes(k));
+          });
+        }
+      }
+
+      function drawDice(x, y, size, val, col) {
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.fillRect(x - size / 2 + 4, y - size / 2 + 6, size, size);
+        ctx.fillStyle = "#fff";
+        ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x - size / 2, y - size / 2, size, size, 14) : ctx.rect(x - size / 2, y - size / 2, size, size); ctx.fill();
+        ctx.strokeStyle = col; ctx.lineWidth = 5; ctx.stroke();
+        const P = { 1: [[0, 0]], 2: [[-1, -1], [1, 1]], 3: [[-1, -1], [0, 0], [1, 1]], 4: [[-1, -1], [1, -1], [-1, 1], [1, 1]], 5: [[-1, -1], [1, -1], [0, 0], [-1, 1], [1, 1]], 6: [[-1, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [1, 1]] };
+        ctx.fillStyle = val === 6 ? "#dc2626" : "#111827";
+        for (const [dx, dy] of P[val]) { ctx.beginPath(); ctx.arc(x + dx * size * 0.26, y + dy * size * 0.26, size * 0.09, 0, Math.PI * 2); ctx.fill(); }
+      }
+
+      function draw() {
+        ctx.fillStyle = "#0f1020";
+        ctx.fillRect(0, 0, W, H);
+        drawBoard();
+        drawTokens();
+        // Neeche ka panel
+        const p = cur(), col = COLORS[p.ci];
+        ctx.fillStyle = "#1b1d40";
+        ctx.fillRect(0, BOARD, W, H - BOARD);
+        players.forEach((q, i) => {
+          const x = 14 + i * 60, y = BOARD + 16;
+          ctx.globalAlpha = q.done ? 0.4 : 1;
+          ctx.fillStyle = COLORS[q.ci].c;
+          ctx.beginPath(); ctx.arc(x + 14, y + 14, i === turnIdx ? 14 : 10, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#fff"; ctx.font = '700 11px "Segoe UI", sans-serif'; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText(q.cpu ? "🤖" : q.tokens.filter((t) => t === FINISH).length + "/4", x + 14, y + 14);
+          ctx.globalAlpha = 1;
+        });
+        const shake = phase === "rolling" ? (Math.random() - 0.5) * 10 : 0;
+        drawDice(W - 80 + shake, BOARD + 70, 84, dice, col.c);
+        ctx.fillStyle = col.c;
+        ctx.font = '800 22px "Segoe UI", sans-serif';
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText(`${who()} ki baari`, 16, BOARD + 66);
+        ctx.fillStyle = "#cbd5e1";
+        ctx.font = '600 15px "Segoe UI", sans-serif';
+        const m = msg.length > 40 ? msg.slice(0, 39) + "…" : msg;
+        ctx.fillText(m, 16, BOARD + 98);
+        if (phase === "roll" && !p.cpu) {
+          ctx.fillStyle = `rgba(255,204,51,${0.6 + Math.sin(pulse * 6) * 0.4})`;
+          ctx.font = '800 14px "Segoe UI", sans-serif';
+          ctx.textAlign = "center";
+          ctx.fillText("👆 TAP", W - 80, BOARD + 125);
+        }
+      }
+
+      // ---------- Input ----------
+      canvas.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        sound.unlock();
+        if (!players || phase === "over") return;
+        const pt = canvasPoint(canvas, e, W, H);
+        const p = cur();
+        if (p.cpu) return;
+        if (phase === "roll") { roll(); return; } // kahin bhi tap = dice
+        if (phase === "move") {
+          let best = -1, bd = S * 0.8;
+          for (const k of movable(p, dice)) {
+            const xy = tokenXY(p, k), d = Math.hypot(xy.x - pt.x, xy.y - pt.y);
+            if (d < bd) { bd = d; best = k; }
+          }
+          if (best >= 0) moveToken(best);
+        }
+      });
+      window.addEventListener("keydown", (e) => {
+        if (!players || cur().cpu) return;
+        if ((e.code === "Space" || e.code === "Enter") && phase === "roll") { e.preventDefault(); roll(); }
+        const n = parseInt(e.key, 10);
+        if (phase === "move" && n >= 1 && n <= 4 && movable(cur(), dice).includes(n - 1)) moveToken(n - 1);
+      });
+
+      let last = performance.now();
+      function loop(now) {
+        const dt = Math.min((now - last) / 1000, 1 / 20);
+        last = now;
+        if (players) { update(dt); draw(); }
+        requestAnimationFrame(loop);
+      }
+      document.addEventListener("visibilitychange", () => { last = performance.now(); });
+      const resize = () => fitCanvas(canvas, ctx, wrap, W, H);
+      window.addEventListener("resize", resize);
+      resize();
+      renderSetup();
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>

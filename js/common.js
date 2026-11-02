@@ -42,9 +42,16 @@ const sound = (() => {
   return { beep, unlock: ctx };
 })();
 
+// Kamzor phone (4 ya kam CPU core / 3GB ya kam RAM) pehchano, taaki wahan halka graphics chale
+const GZ_LOW_END = (navigator.hardwareConcurrency || 8) <= 4 || (navigator.deviceMemory || 8) <= 3;
+// Canvas ki pixel density: 3x screen par 9 guna pixel paint hote the — 2x (kamzor phone par 1.5x) kaafi hai
+function gzDpr() {
+  return Math.min(window.devicePixelRatio || 1, GZ_LOW_END ? 1.5 : 2);
+}
+
 // Canvas ko box ke andar fit karo. Game hamesha W x H "logical" units mein draw karta hai.
 function fitCanvas(canvas, ctx, box, W, H) {
-  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const dpr = gzDpr();
   const scale = Math.min(box.clientWidth / W, box.clientHeight / H);
   const cw = Math.max(1, Math.floor(W * scale)), ch = Math.max(1, Math.floor(H * scale));
   canvas.style.width = cw + "px";

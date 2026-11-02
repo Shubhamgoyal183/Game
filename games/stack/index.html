@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <script src="../../js/site.js" defer></script>
+  <title>Stack Tower – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+</head>
+<body class="fullscreen">
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🏗️ Stack Tower</h1>
+    <span class="spacer"></span>
+  </header>
+  <main class="stage">
+    <div class="canvas-wrap" id="wrap"><canvas id="game"></canvas></div>
+    <div class="hint">Tap / Space = block rok do · Jo bahar latka woh kat jaata hai · Bilkul seedha = PERFECT</div>
+  </main>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const W = 400, BLOCK_H = 30, DEPTH = 16, START_W = 220;
+      let H = 720;
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const wrap = document.getElementById("wrap");
+
+      let stack, moving, falling, camY, state, best, perfect, popups, hue0, speed;
+      best = store.get("stack_best", 0);
+
+      const color = (i, l = 55) => `hsl(${(hue0 + i * 9) % 360}, 70%, ${l}%)`;
+
+      function reset() {
+        hue0 = Math.floor(Math.random() * 360);
+        stack = [{ x: (W - START_W) / 2, w: START_W, i: 0 }];
+        falling = [];
+        popups = [];
+        perfect = 0;
+        camY = 0;
+        speed = 170;
+        spawn();
+        state = "ready";
+      }
+
+      function spawn() {
+        const top = stack[stack.length - 1], i = stack.length;
+        const fromLeft = i % 2 === 1;
+        moving = { x: fromLeft ? -top.w : W, w: top.w, i, dir: fromLeft ? 1 : -1 };
+        speed = Math.min(420, 170 + i * 6);
+      }
+
+      const score = () => stack.length - 1;
+
+      function drop() {
+        sound.unlock();
+        if (state === "ready") { state = "play"; return; }
+        if (state === "over") { reset(); state = "play"; return; }
+        if (state !== "play") return;
+        const top = stack[stack.length - 1];
+        const left = Math.max(top.x, moving.x), right = Math.min(top.x + top.w, moving.x + moving.w);
+        const overlap = right - left;
+        if (overlap <= 0) {
+          // Pura chook gaya
+          falling.push({ ...moving, vy: 0, vx: moving.dir * 60, rot: 0 });
+          moving = null;
+          state = "over";
+          if (score() > best) { best = score(); store.set("stack_best", best); }
+          sound.beep(150, 0.5, "sawtooth", 0.07, 60);
+          if (navigator.vibrate) navigator.vibrate(150);
+          return;
+        }
+        if (Math.abs(moving.x - top.x) < 5) {
+          // PERFECT: bilkul upar
+          perfect++;
+          let w = top.w;
+          if (perfect >= 3 && w < START_W) w = Math.min(START_W, w + 12); // inaam: block bada
+          stack.push({ x: top.x - (w - top.w) / 2, w, i: moving.i });
+          popups.push({ text: perfect >= 3 ? `PERFECT x${perfect}!` : "PERFECT!", t: 1 });
+          sound.beep(500 + Math.min(perfect, 10) * 80, 0.12, "sine", 0.08);
+          if (navigator.vibrate) navigator.vibrate(20);
+        } else {
+          perfect = 0;
+          stack.push({ x: left, w: overlap, i: moving.i });
+          // Kata hua hissa girta hai
+          const cutX = moving.x < top.x ? moving.x : right;
+          falling.push({ x: cutX, w: moving.w - overlap, i: moving.i, vy: 0, vx: (moving.x < top.x ? -1 : 1) * 40, rot: 0 });
+          sound.beep(300, 0.06, "triangle", 0.06);
+        }
+        spawn();
+      }
+
+      const baseY = () => H - 120;
+      const blockY = (i) => baseY() - i * BLOCK_H + camY;
+
+      function update(dt) {
+        for (const p of popups) p.t -= dt;
+        popups = popups.filter((p) => p.t > 0);
+        for (const f of falling) { f.vy += 1400 * dt; f.y = (f.y ?? blockY(f.i)) + f.vy * dt; f.x += f.vx * dt; f.rot += f.vx * 0.0006; }
+        falling = falling.filter((f) => f.y < H + 200);
+        // Camera upar chadhta hai
+        const want = Math.max(0, (stack.length - 1) * BLOCK_H - (H * 0.45 - 120));
+        camY += (want - camY) * Math.min(1, dt * 5);
+        if (state === "play" && moving) {
+          moving.x += moving.dir * speed * dt;
+          if (moving.x > W - moving.w * 0.15 && moving.dir > 0) moving.dir = -1;
+          if (moving.x < -moving.w * 0.85 && moving.dir < 0) moving.dir = 1;
+        }
+      }
+
+      function block(x, y, w, i, rot = 0) {
+        ctx.save();
+        if (rot) { ctx.translate(x + w / 2, y); ctx.rotate(rot); ctx.translate(-(x + w / 2), -y); }
+        // Upar ki satah
+        ctx.fillStyle = color(i, 68);
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + DEPTH, y - DEPTH * 0.6); ctx.lineTo(x + w + DEPTH, y - DEPTH * 0.6); ctx.lineTo(x + w, y); ctx.closePath(); ctx.fill();
+        // Saamne
+        ctx.fillStyle = color(i, 55);
+        ctx.fillRect(x, y, w, BLOCK_H);
+        // Side
+        ctx.fillStyle = color(i, 40);
+        ctx.beginPath(); ctx.moveTo(x + w, y); ctx.lineTo(x + w + DEPTH, y - DEPTH * 0.6); ctx.lineTo(x + w + DEPTH, y + BLOCK_H - DEPTH * 0.6); ctx.lineTo(x + w, y + BLOCK_H); ctx.closePath(); ctx.fill();
+        ctx.restore();
+      }
+
+      function text(s, x, y, size, color, align = "center") {
+        ctx.font = `800 ${size}px "Segoe UI", sans-serif`;
+        ctx.textAlign = align; ctx.textBaseline = "middle"; ctx.fillStyle = color; ctx.fillText(s, x, y);
+      }
+
+      function draw() {
+        const top = stack.length;
+        const g = ctx.createLinearGradient(0, 0, 0, H);
+        g.addColorStop(0, `hsl(${(hue0 + top * 9 + 180) % 360}, 45%, 18%)`);
+        g.addColorStop(1, `hsl(${(hue0 + top * 9 + 200) % 360}, 50%, 35%)`);
+        ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+        // Zameen
+        const gy = baseY() + BLOCK_H + camY;
+        if (gy < H) { ctx.fillStyle = "rgba(0,0,0,0.35)"; ctx.fillRect(0, gy, W, H - gy); }
+        // Sirf screen par dikhne wale block
+        for (const b of stack) {
+          const y = blockY(b.i);
+          if (y > H + 40 || y < -60) continue;
+          block(b.x, y, b.w, b.i);
+        }
+        if (moving && state !== "over") block(moving.x, blockY(moving.i), moving.w, moving.i);
+        for (const f of falling) block(f.x, f.y, f.w, f.i, f.rot);
+        text(String(score()), W / 2, 70, 64, "#fff");
+        text(`Best ${best}`, W / 2, 112, 15, "rgba(255,255,255,0.7)");
+        for (const p of popups) { ctx.globalAlpha = p.t; text(p.text, W / 2, H * 0.3 - (1 - p.t) * 30, 26, "#fde047"); ctx.globalAlpha = 1; }
+        if (state === "ready") {
+          text("🏗️ Stack Tower", W / 2, H * 0.38, 34, "#fff");
+          text(IS_TOUCH ? "Tap karke shuru karo" : "Space / Click se shuru", W / 2, H * 0.45, 18, "#fde047");
+        }
+        if (state === "over") {
+          text(score() >= best && score() > 0 ? "🏆 Naya Record!" : "🧱 Tower gir gaya!", W / 2, H * 0.38, 30, "#fff");
+          text(IS_TOUCH ? "Tap = dobara" : "Space = dobara", W / 2, H * 0.45, 17, "#fde047");
+        }
+      }
+
+      canvas.addEventListener("pointerdown", (e) => { e.preventDefault(); drop(); });
+      window.addEventListener("keydown", (e) => { if ((e.code === "Space" || e.code === "Enter") && !e.repeat) { e.preventDefault(); drop(); } });
+
+      let last = performance.now();
+      function loop(now) {
+        const dt = Math.min((now - last) / 1000, 1 / 30);
+        last = now;
+        update(dt);
+        draw();
+        requestAnimationFrame(loop);
+      }
+      document.addEventListener("visibilitychange", () => { last = performance.now(); });
+      const resize = () => ({ H } = fitCanvasFill(canvas, ctx, wrap, W, 640, W, 900));
+      window.addEventListener("resize", resize);
+      resize();
+      reset();
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>

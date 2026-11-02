@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <script src="../../js/site.js" defer></script>
+  <title>Carrom – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+</head>
+<body class="fullscreen">
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>🎯 Carrom</h1>
+    <span class="spacer"></span>
+  </header>
+  <main class="stage">
+    <div class="row" id="modeRow">
+      <button class="btn small" data-mode="cpu">🤖 vs Computer</button>
+      <button class="btn small" data-mode="2p">👥 2 Players</button>
+    </div>
+    <div class="canvas-wrap" id="wrap"><canvas id="game"></canvas></div>
+    <div class="hint" id="hint">Striker ko line par khiskao · Striker se peeche kheencho aur chhodo = shot · Apni goti daalo = phir baari</div>
+  </main>
+
+  <div class="modal" id="modal">
+    <div class="panel">
+      <h2 id="mTitle"></h2>
+      <p id="mText"></p>
+      <button class="btn primary" id="mBtn"></button>
+    </div>
+  </div>
+
+  <script src="../../js/common.js"></script>
+  <script>
+    (() => {
+      const W = 600, H = 720, BY = 60;
+      const L = 40, R = 560, T = BY + 40, B = BY + 560, CX = 300, CY = BY + 300;
+      const CR = 12, SR = 17, POCKET = 23;
+      const POCKETS = [[L + 4, T + 4], [R - 4, T + 4], [L + 4, B - 4], [R - 4, B - 4]];
+      const BASE = { 1: B - 74, 2: T + 74 }, BMIN = 150, BMAX = 450;
+      const canvas = document.getElementById("game");
+      const ctx = canvas.getContext("2d");
+      const wrap = document.getElementById("wrap");
+
+      let mode = store.get("carrom_mode", "cpu");
+      let pieces, striker, turn, phase, drag, aim, shot, msg, msgT, pocketed, queenPending, queenOwner;
+
+      // ---------- Setup ----------
+      function newGame() {
+        pieces = [{ kind: "queen", x: CX, y: CY, vx: 0, vy: 0, r: CR, m: 1 }];
+        // Andar 6 aur bahar 12 goti, baari-baari safed/kaali
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * Math.PI * 2;
+          pieces.push({ kind: i % 2 ? "black" : "white", x: CX + Math.cos(a) * CR * 2.05, y: CY + Math.sin(a) * CR * 2.05, vx: 0, vy: 0, r: CR, m: 1 });
+        }
+        for (let i = 0; i < 12; i++) {
+          const a = (i / 12) * Math.PI * 2 + Math.PI / 12;
+          pieces.push({ kind: i % 2 ? "white" : "black", x: CX + Math.cos(a) * CR * 4.0, y: CY + Math.sin(a) * CR * 4.0, vx: 0, vy: 0, r: CR, m: 1 });
+        }
+        pocketed = { white: 0, black: 0 };
+        queenPending = null;
+        queenOwner = null;
+        turn = 1;
+        newTurn(true);
+        hideModal();
+      }
+
+      const color = (p) => (p === 1 ? "white" : "black");
+      const pname = (p) => (mode === "cpu" ? (p === 1 ? "Aap" : "Computer") : `Player ${p}`);
+      function say(t) { msg = t; msgT = 2.5; }
+
+      function newTurn(first) {
+        striker = { kind: "striker", x: CX, y: BASE[turn], vx: 0, vy: 0, r: SR, m: 1.7 };
+        fixStriker();
+        phase = "place";
+        aim = null;
+        if (!first) say(`${pname(turn)} ki baari (${color(turn) === "white" ? "⚪" : "⚫"})`);
+        else say(`${pname(1)} ⚪ shuru karo`);
+        if (mode === "cpu" && turn === 2) setTimeout(cpuShot, 900);
+      }
+
+      // Striker kisi goti ke upar na ho
+      function fixStriker() {
+        striker.x = Math.max(BMIN, Math.min(BMAX, striker.x));
+        for (let k = 0; k < 40 && blocked(); k++) striker.x = Math.max(BMIN, Math.min(BMAX, striker.x + (k % 2 ? -1 : 1) * (k + 1) * 4));
+      }
+      const blocked = () => pieces.some((p) => Math.hypot(p.x - striker.x, p.y - striker.y) < p.r + SR + 1);
+
+      // ---------- Physics ----------
+      function physics(dt) {
+        const all = [...pieces, striker];
+        const N = 8;
+        for (let s = 0; s < N; s++) {
+          const h = dt / N;
+          for (const p of all) {
+            if (p.gone) continue;
+            p.x += p.vx * h; p.y += p.vy * h;
+            for (const [px, py] of POCKETS) {
+              if (Math.hypot(p.x - px, p.y - py) < POCKET - 2) { p.gone = true; p.vx = p.vy = 0; shot.potted.push(p); sound.beep(200, 0.15, "sine", 0.08, 100); break; }
+            }
+            if (p.gone) continue;
+            if (p.x < L + p.r) { p.x = L + p.r; p.vx = Math.abs(p.vx) * 0.72; }
+            if (p.x > R - p.r) { p.x = R - p.r; p.vx = -Math.abs(p.vx) * 0.72; }
+            if (p.y < T + p.r) { p.y = T + p.r; p.vy = Math.abs(p.vy) * 0.72; }
+            if (p.y > B - p.r) { p.y = B - p.r; p.vy = -Math.abs(p.vy) * 0.72; }
+          }
+          for (let i = 0; i < all.length; i++) {
+            const a = all[i];
+            if (a.gone) continue;
+            for (let j = i + 1; j < all.length; j++) {
+              const b = all[j];
+              if (b.gone) continue;
+              const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), md = a.r + b.r;
+              if (d >= md || d === 0) continue;
+              const nx = dx / d, ny = dy / d, ov = (md - d) / 2;
+              a.x -= nx * ov; a.y -= ny * ov; b.x += nx * ov; b.y += ny * ov;
+              const rel = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+              if (rel <= 0) continue;
+              const imp = (1.9 * rel) / (a.m + b.m) * 0.95;
+              a.vx -= imp * b.m * nx; a.vy -= imp * b.m * ny;
+              b.vx += imp * a.m * nx; b.vy += imp * a.m * ny;
+              if (rel > 60) sound.beep(1000 + Math.random() * 300, 0.02, "square", Math.min(0.05, rel / 9000));
+            }
+          }
+        }
+        let moving = false;
+        for (const p of all) {
+          if (p.gone) continue;
+          const sp = Math.hypot(p.vx, p.vy);
+          if (sp < 6) { p.vx = p.vy = 0; continue; }
+          moving = true;
+          const ns = Math.max(0, sp - (90 + sp * 0.9) * dt);
+          p.vx *= ns / sp; p.vy *= ns / sp;
+        }
+        return moving;
+      }
+
+      // ---------- Shot ----------
+      function fire(angle, power) {
+        if (phase !== "place" && phase !== "aim") return;
+        if (blocked()) { say("Striker goti par hai — thoda khiskao"); return; }
+        const v = 250 + power * 1250;
+        striker.vx = Math.cos(angle) * v;
+        striker.vy = Math.sin(angle) * v;
+        shot = { potted: [] };
+        phase = "rolling";
+        aim = null;
+        sound.beep(420, 0.06, "square", 0.06, 200);
+      }
+
+      function endShot() {
+        const me = color(turn), opp = color(turn === 1 ? 2 : 1);
+        const potted = shot.potted;
+        const own = potted.filter((p) => p.kind === me).length;
+        const theirs = potted.filter((p) => p.kind === opp).length;
+        const queen = potted.some((p) => p.kind === "queen");
+        const foul = striker.gone || potted.includes(striker);
+        pocketed[me] += own;
+        pocketed[opp] += theirs;
+        pieces = pieces.filter((p) => !p.gone);
+        let keep = own > 0;
+
+        if (queen) { queenPending = turn; keep = true; say(`👑 Queen gayi! Ab apni goti daal ke cover karo`); }
+        else if (queenPending === turn) {
+          if (own > 0) { queenOwner = turn; queenPending = null; say(`👑 Queen cover ho gayi! +3`); }
+          else { returnPiece("queen"); queenPending = null; say("Queen cover nahi hui — wapas beech mein"); }
+        }
+        if (foul) {
+          keep = false;
+          if (pocketed[me] > 0) { pocketed[me]--; returnPiece(me); }
+          if (queenPending === turn) { returnPiece("queen"); queenPending = null; }
+          say(`❌ Foul! Striker gir gaya — ek goti wapas`);
+          sound.beep(150, 0.3, "sawtooth", 0.06);
+        } else if (own) say(`✅ ${pname(turn)} ne ${own} goti daali — phir baari`);
+
+        if (pocketed.white >= 9 || pocketed.black >= 9) return win(pocketed.white >= 9 ? 1 : 2);
+        if (!keep) turn = turn === 1 ? 2 : 1;
+        newTurn();
+      }
+
+      function returnPiece(kind) {
+        const p = { kind, x: CX, y: CY, vx: 0, vy: 0, r: CR, m: 1 };
+        for (let k = 0; k < 30 && pieces.some((q) => Math.hypot(q.x - p.x, q.y - p.y) < CR * 2); k++) { const a = k * 2.4; p.x = CX + Math.cos(a) * (8 + k * 3); p.y = CY + Math.sin(a) * (8 + k * 3); }
+        pieces.push(p);
+      }
+
+      function win(p) {
+        phase = "over";
+        const title = mode === "cpu" ? (p === 1 ? "🏆 Aap jeet gaye!" : "😢 Computer jeeta") : `🏆 Player ${p} jeeta!`;
+        [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => sound.beep(f, 0.15, "sine", 0.07), i * 120));
+        showModal(title, `⚪ ${pocketed.white}/9 · ⚫ ${pocketed.black}/9${queenOwner ? ` · 👑 ${pname(queenOwner)}` : ""}`, "Naya game", newGame);
+      }
+
+      // ---------- Computer ----------
+      function cpuShot() {
+        if (phase !== "place" || turn !== 2) return;
+        const mine = pieces.filter((p) => p.kind === "black" || (p.kind === "queen" && pocketed.black >= 3));
+        let best = null;
+        for (let sx = BMIN; sx <= BMAX; sx += 25) {
+          striker.x = sx;
+          if (blocked()) continue;
+          for (const c of mine) for (const [px, py] of POCKETS) {
+            const dx = px - c.x, dy = py - c.y, dl = Math.hypot(dx, dy);
+            const gx = c.x - (dx / dl) * (CR + SR), gy = c.y - (dy / dl) * (CR + SR);
+            const ax = gx - sx, ay = gy - striker.y, al = Math.hypot(ax, ay);
+            // Kaat ka kona (cut angle) jitna seedha, utna aasaan
+            const cut = (ax * dx + ay * dy) / (al * dl);
+            if (cut < 0.3) continue;
+            const clear = !pieces.some((q) => q !== c && segDist(q.x, q.y, sx, striker.y, gx, gy) < q.r + SR);
+            const sc = cut * 2 - (al + dl) / 900 + (clear ? 1 : -2);
+            if (!best || sc > best.sc) best = { sc, sx, ang: Math.atan2(ay, ax), pw: Math.min(1, 0.25 + (al + dl) / 1100) };
+          }
+        }
+        if (!best) best = { sx: CX, ang: Math.PI / 2 + (Math.random() - 0.5), pw: 0.6 };
+        striker.x = best.sx;
+        fixStriker();
+        aim = { ang: best.ang, pw: best.pw };
+        phase = "aim";
+        setTimeout(() => fire(best.ang + (Math.random() - 0.5) * 0.05, best.pw), 700);
+      }
+      function segDist(px, py, ax, ay, bx, by) {
+        const dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy || 1;
+        const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l));
+        return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
+      }
+
+      // ---------- Draw ----------
+      let boardImg = null;
+      function drawBoard() {
+        if (!boardImg) {
+          boardImg = document.createElement("canvas");
+          boardImg.width = W; boardImg.height = 600;
+          const g = boardImg.getContext("2d");
+          g.fillStyle = "#3f2410"; g.fillRect(0, 0, W, 600);
+          g.fillStyle = "#6b3a1a"; g.fillRect(8, 8, W - 16, 584);
+          const grad = g.createRadialGradient(300, 300, 40, 300, 300, 330);
+          grad.addColorStop(0, "#f7e3b5"); grad.addColorStop(1, "#e4c48a");
+          g.fillStyle = grad; g.fillRect(L, 40, R - L, 520);
+          g.strokeStyle = "#7c2d12"; g.lineWidth = 2;
+          for (const yb of [74 + 40, 600 - 40 - 74]) {
+            g.beginPath(); g.moveTo(BMIN, yb - SR); g.lineTo(BMAX, yb - SR); g.moveTo(BMIN, yb + SR); g.lineTo(BMAX, yb + SR); g.stroke();
+            for (const xb of [BMIN, BMAX]) { g.fillStyle = "#dc2626"; g.beginPath(); g.arc(xb, yb, SR, 0, Math.PI * 2); g.fill(); g.stroke(); }
+          }
+          for (const xb of [74 + 40, 600 - 40 - 74]) {
+            g.beginPath(); g.moveTo(xb - SR, BMIN); g.lineTo(xb - SR, BMAX); g.moveTo(xb + SR, BMIN); g.lineTo(xb + SR, BMAX); g.stroke();
+          }
+          g.beginPath(); g.arc(300, 300, 62, 0, Math.PI * 2); g.stroke();
+          g.beginPath(); g.arc(300, 300, 18, 0, Math.PI * 2); g.stroke();
+          for (const [px, py] of POCKETS) { g.fillStyle = "#111"; g.beginPath(); g.arc(px, py - BY, POCKET, 0, Math.PI * 2); g.fill(); }
+          // Kono ki tirchi lakeer
+          g.strokeStyle = "rgba(124,45,18,0.6)";
+          for (const [ax, ay, bx, by] of [[L + 40, 80, 210, 210], [R - 40, 80, 390, 210], [L + 40, 520, 210, 390], [R - 40, 520, 390, 390]]) { g.beginPath(); g.moveTo(ax, ay); g.lineTo(bx, by); g.stroke(); }
+        }
+        ctx.drawImage(boardImg, 0, BY, W, 600);
+      }
+
+      function drawPiece(p) {
+        if (p.gone) return;
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.beginPath(); ctx.arc(p.x + 2, p.y + 3, p.r, 0, Math.PI * 2); ctx.fill();
+        const col = p.kind === "white" ? ["#fefce8", "#d6c9a5"] : p.kind === "black" ? ["#3f3f46", "#111"] : p.kind === "queen" ? ["#f43f5e", "#9f1239"] : ["#bfdbfe", "#2563eb"];
+        const g = ctx.createRadialGradient(p.x - p.r * 0.3, p.y - p.r * 0.3, 1, p.x, p.y, p.r);
+        g.addColorStop(0, col[0]); g.addColorStop(1, col[1]);
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = "rgba(0,0,0,0.25)"; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 0.6, 0, Math.PI * 2); ctx.stroke();
+      }
+
+      function text(s, x, y, size, color, align = "center") {
+        ctx.font = `800 ${size}px "Segoe UI", sans-serif`;
+        ctx.textAlign = align; ctx.textBaseline = "middle";
+        ctx.fillStyle = color; ctx.fillText(s, x, y);
+      }
+
+      function draw() {
+        ctx.fillStyle = "#0f1020"; ctx.fillRect(0, 0, W, H);
+        drawBoard();
+        pieces.forEach(drawPiece);
+        if (phase === "aim" && aim) {
+          const dx = Math.cos(aim.ang), dy = Math.sin(aim.ang);
+          ctx.strokeStyle = "rgba(255,255,255,0.8)"; ctx.setLineDash([6, 6]); ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(striker.x, striker.y); ctx.lineTo(striker.x + dx * (120 + aim.pw * 160), striker.y + dy * (120 + aim.pw * 160)); ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        drawPiece(striker);
+        if (phase === "place" && !(mode === "cpu" && turn === 2)) {
+          ctx.strokeStyle = `rgba(250,204,21,${0.5 + Math.sin(performance.now() / 150) * 0.4})`; ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.arc(striker.x, striker.y, SR + 5, 0, Math.PI * 2); ctx.stroke();
+        }
+        // Score bars
+        const top = mode === "cpu" ? "🤖 Computer ⚫" : "Player 2 ⚫", bot = mode === "cpu" ? "Aap ⚪" : "Player 1 ⚪";
+        text(`${turn === 2 ? "▶ " : ""}${top}  ${pocketed.black}/9`, 16, 30, 18, turn === 2 ? "#fde047" : "#94a3b8", "left");
+        text(`${turn === 1 ? "▶ " : ""}${bot}  ${pocketed.white}/9`, 16, H - 30, 18, turn === 1 ? "#fde047" : "#94a3b8", "left");
+        if (queenOwner) text("👑", W - 24, queenOwner === 1 ? H - 30 : 30, 20, "#fff");
+        if (aim && phase === "aim" && !(mode === "cpu" && turn === 2)) {
+          ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(W - 180, H - 40, 160, 12);
+          ctx.fillStyle = `hsl(${120 - aim.pw * 120},85%,50%)`; ctx.fillRect(W - 180, H - 40, 160 * aim.pw, 12);
+        }
+        if (msgT > 0) {
+          ctx.globalAlpha = Math.min(1, msgT);
+          ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(40, CY - 18, W - 80, 36);
+          text(msg, W / 2, CY, 16, "#fff");
+          ctx.globalAlpha = 1;
+        }
+      }
+
+      // ---------- Input ----------
+      canvas.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        sound.unlock();
+        if (phase !== "place" || (mode === "cpu" && turn === 2)) return;
+        const p = canvasPoint(canvas, e, W, H);
+        canvas.setPointerCapture(e.pointerId);
+        const onStriker = Math.hypot(p.x - striker.x, p.y - striker.y) < SR + 18;
+        drag = { sx: p.x, sy: p.y, onStriker, mode: onStriker ? "pending" : "move" };
+        if (!onStriker && Math.abs(p.y - striker.y) < 60) { striker.x = p.x; fixStriker(); }
+        else if (!onStriker) drag = null;
+      });
+      canvas.addEventListener("pointermove", (e) => {
+        if (!drag) return;
+        const p = canvasPoint(canvas, e, W, H);
+        const dx = p.x - drag.sx, dy = p.y - drag.sy;
+        // Peeche kheencha (apni taraf) = nishana; side mein = striker khiskao
+        const back = turn === 1 ? dy : -dy;
+        if (drag.mode === "pending") drag.mode = back > 14 ? "aim" : Math.abs(dx) > 10 ? "move" : "pending";
+        if (drag.mode === "move") { striker.x = p.x; fixStriker(); }
+        if (drag.mode === "aim") {
+          const ax = striker.x - p.x, ay = striker.y - p.y;
+          aim = { ang: Math.atan2(ay, ax), pw: Math.min(1, Math.hypot(ax, ay) / 160) };
+          phase = "aim";
+        }
+      });
+      canvas.addEventListener("pointerup", () => {
+        if (!drag) return;
+        const d = drag;
+        drag = null;
+        if (d.mode === "aim" && aim) {
+          if (aim.pw < 0.08) { phase = "place"; aim = null; return; }
+          fire(aim.ang, aim.pw);
+        }
+      });
+
+      function setMode(m) {
+        mode = m;
+        store.set("carrom_mode", m);
+        document.querySelectorAll("#modeRow .btn").forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
+        document.activeElement && document.activeElement.blur();
+        newGame();
+      }
+      document.querySelectorAll("#modeRow .btn").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+
+      let last = performance.now();
+      function loop(now) {
+        const dt = Math.min((now - last) / 1000, 1 / 30);
+        last = now;
+        msgT = Math.max(0, msgT - dt);
+        if (phase === "rolling" && !physics(dt)) endShot();
+        draw();
+        requestAnimationFrame(loop);
+      }
+      document.addEventListener("visibilitychange", () => { last = performance.now(); });
+      const resize = () => fitCanvas(canvas, ctx, wrap, W, H);
+      window.addEventListener("resize", resize);
+      resize();
+      setMode(mode);
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>

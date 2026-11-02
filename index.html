@@ -4,15 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0f1020">
-  <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" href="icons/favicon.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="mobile-web-app-capable" content="yes">
-  <script src="js/pwa.js" defer></script>
+  <script src="js/site.js" defer></script>
   <meta name="description" content="Game Zone by Shubham Goyal – free games jo mobile aur laptop dono par chalte hain.">
   <title>Game Zone by Shubham Goyal</title>
   <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/account.css">
 </head>
 <body>
   <header class="site-header">
@@ -37,10 +35,9 @@
           <div><b>100%</b><span>Offline</span></div>
         </div>
         <div class="get-app" id="getApp">
-          <a class="app-btn apk" id="apkBtn" href="download/GameZone.apk" download hidden>⬇️ Android APK</a>
-          <button class="app-btn install" id="installBtn" hidden>📲 App Install karo</button>
+          <a class="app-btn apk" id="apkBtn" href="download/GameZone.apk" download hidden>⬇️ Android App Download</a>
         </div>
-        <p class="app-note" id="appNote">Free games · koi login nahi · bina internet ke bhi chalte hain</p>
+        <p class="app-note" id="appNote">Free games · Android app · login karke progress save karo</p>
       </div>
     </section>
 
@@ -65,42 +62,23 @@
 
   <script src="js/games.js"></script>
   <script src="js/home.js"></script>
+  <script src="js/firebase-config.js"></script>
+  <script src="js/vendor/firebase.js"></script>
+  <script src="js/account.js"></script>
   <script>
-    // App install / APK download buttons
+    // Android APK download button (app ke andar chhupa do)
     (() => {
-      const inApp = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone || window.Capacitor;
-      if (inApp) return; // app ke andar ho toh buttons ki zaroorat nahi
+      if (window.Capacitor) return;
       const apk = document.getElementById("apkBtn");
-      const install = document.getElementById("installBtn");
       const note = document.getElementById("appNote");
-      const isAndroid = /android/i.test(navigator.userAgent);
-      const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-
-      // APK file website par hai tabhi button dikhao
-      if (location.protocol !== "file:") {
-        fetch(apk.getAttribute("href"), { method: "HEAD" })
-          .then((r) => { if (r.ok) { apk.hidden = false; if (isAndroid) note.textContent = "APK download karke kholo. 'Unknown apps' ki permission maange toh Allow karo."; } })
-          .catch(() => {});
-      }
-
-      let prompt = null;
-      window.addEventListener("beforeinstallprompt", (e) => {
-        e.preventDefault();
-        prompt = e;
-        install.hidden = false;
-      });
-      install.addEventListener("click", async () => {
-        if (!prompt) return;
-        prompt.prompt();
-        await prompt.userChoice;
-        prompt = null;
-        install.hidden = true;
-      });
-      window.addEventListener("appinstalled", () => {
-        install.hidden = true;
-        note.textContent = "✅ App install ho gaya! Ab home screen se bina net ke khelo.";
-      });
-      if (isIOS) note.textContent = "📱 iPhone: Share ⬆️ → 'Add to Home Screen' — phir bina net ke chalega.";
+      if (location.protocol === "file:") return;
+      fetch(apk.getAttribute("href"), { method: "HEAD" })
+        .then((r) => {
+          if (!r.ok) return;
+          apk.hidden = false;
+          if (/android/i.test(navigator.userAgent)) note.textContent = "APK download karke kholo. 'Unknown apps' ki permission maange toh Allow karo.";
+        })
+        .catch(() => {});
     })();
   </script>
 </body>

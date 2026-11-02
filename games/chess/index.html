@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f1020">
+  <link rel="icon" type="image/png" href="../../icons/favicon.png">
+  <link rel="apple-touch-icon" href="../../icons/apple-touch-icon.png">
+  <script src="../../js/site.js" defer></script>
+  <title>Chess – Game Zone</title>
+  <link rel="stylesheet" href="../../css/game.css">
+  <style>
+    body { user-select: none; -webkit-user-select: none; }
+    main.stage { gap: 10px; }
+    .board {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      width: min(96vw, 520px, calc(100dvh - 260px));
+      min-width: 280px;
+      aspect-ratio: 1;
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+      border: 6px solid #5b3a1e;
+    }
+    .sq { position: relative; display: grid; place-items: center; cursor: pointer; border: none; padding: 0; touch-action: manipulation; }
+    .sq.l { background: #eed9b6; }
+    .sq.d { background: #b07d4f; }
+    .sq.last { box-shadow: inset 0 0 0 100px rgba(250, 204, 21, 0.35); }
+    .sq.sel { box-shadow: inset 0 0 0 100px rgba(34, 197, 94, 0.5); }
+    .sq.check { box-shadow: inset 0 0 18px 6px rgba(239, 68, 68, 0.95); }
+    .sq .dot { position: absolute; width: 30%; height: 30%; border-radius: 50%; background: rgba(20, 20, 20, 0.28); pointer-events: none; }
+    .sq .ring { position: absolute; inset: 6%; border-radius: 50%; border: 5px solid rgba(20, 20, 20, 0.28); pointer-events: none; }
+    .pc { font-size: min(10vw, 52px, calc((100dvh - 260px) / 9.5)); line-height: 1; pointer-events: none; font-family: "Segoe UI Symbol", "Noto Sans Symbols 2", "DejaVu Sans", serif; }
+    .pc.w { color: #fff; text-shadow: 0 0 2px #000, 0 0 2px #000, 0 2px 3px rgba(0,0,0,0.6); }
+    .pc.b { color: #1c1917; text-shadow: 0 0 1px #fff8, 0 2px 3px rgba(0,0,0,0.4); }
+    .coord { position: absolute; font: 700 9px "Segoe UI", sans-serif; opacity: 0.6; pointer-events: none; }
+    .coord.f { right: 3px; bottom: 1px; } .coord.r { left: 3px; top: 1px; }
+    .sq.l .coord { color: #8b5a2b; } .sq.d .coord { color: #f5e6c8; }
+    .caps { min-height: 22px; font-size: 1.15rem; letter-spacing: -2px; width: min(96vw, 520px); }
+    .promo { display: flex; gap: 10px; justify-content: center; }
+    .promo button { font-size: 2.6rem; width: 64px; height: 64px; border-radius: 14px; border: none; background: #eed9b6; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="btn small" href="../../index.html">← Home</a>
+    <h1>♟️ Chess</h1>
+    <button class="btn small" id="undoBtn">↶</button>
+  </header>
+  <main class="stage">
+    <div class="row" id="modeRow">
+      <button class="btn small" data-mode="1">🤖 Easy</button>
+      <button class="btn small" data-mode="2">🤖 Medium</button>
+      <button class="btn small" data-mode="3">🤖 Hard</button>
+      <button class="btn small" data-mode="2p">👥 2 Players</button>
+    </div>
+    <div class="caps" id="capsB"></div>
+    <div class="board" id="board"></div>
+    <div class="caps" id="capsW"></div>
+    <div class="status" id="status"></div>
+    <button class="btn primary" id="newBtn">🔄 Naya game</button>
+  </main>
+
+  <div class="modal" id="modal">
+    <div class="panel">
+      <h2 id="mTitle"></h2>
+      <p id="mText"></p>
+      <div class="promo" id="promoRow" hidden></div>
+      <button class="btn primary" id="mBtn"></button>
+    </div>
+  </div>
+
+  <script src="../../js/common.js"></script>
+  <script src="engine.js"></script>
+  <script>
+    (() => {
+      const C = window.ChessEngine;
+      const $ = (id) => document.getElementById(id);
+      // ︎ = emoji ki jagah saada chinh (taaki rang de sakein)
+      const GLYPH = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
+      const g = (p) => GLYPH[p.toLowerCase()] + "︎";
+      const VAL = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
+
+      let mode = store.get("chess_mode", "2");
+      let state, history, sel, last, busy, over;
+      const cells = [];
+
+      for (let i = 0; i < 64; i++) {
+        const b = document.createElement("button");
+        const r = i >> 3, c = i & 7;
+        b.className = "sq " + ((r + c) % 2 ? "d" : "l");
+        b.addEventListener("click", () => tap(i));
+        $("board").appendChild(b);
+        cells.push(b);
+      }
+
+      function newGame() {
+        state = C.fromFEN(C.START);
+        history = [];
+        sel = null;
+        last = null;
+        busy = false;
+        over = false;
+        hideModal();
+        render();
+      }
+
+      const vsCpu = () => mode !== "2p";
+
+      function render() {
+        const moves = sel !== null ? C.legalMoves(state).filter((m) => m.from === sel) : [];
+        const st = C.status(state);
+        const king = state.board.indexOf(state.turn === "w" ? "K" : "k");
+        cells.forEach((el, i) => {
+          const p = state.board[i];
+          const r = i >> 3, c = i & 7;
+          el.classList.toggle("sel", sel === i);
+          el.classList.toggle("last", !!last && (last.from === i || last.to === i));
+          el.classList.toggle("check", (st === "check" || st === "mate") && i === king);
+          const target = moves.find((m) => m.to === i);
+          el.innerHTML =
+            (p ? `<span class="pc ${C.colorOf(p)}">${g(p)}</span>` : "") +
+            (target ? (target.captured ? '<span class="ring"></span>' : '<span class="dot"></span>') : "") +
+            (c === 7 ? `<span class="coord r">${8 - r}</span>` : "") +
+            (r === 7 ? `<span class="coord f">${"abcdefgh"[c]}</span>` : "");
+        });
+        // Kate hue mohre
+        const count = {};
+        for (const p of "PNBRQpnbrq") count[p] = 0;
+        for (const p of state.board) if (p && p.toLowerCase() !== "k") count[p]++;
+        const full = { P: 8, N: 2, B: 2, R: 2, Q: 1 };
+        let lostW = "", lostB = "", matW = 0, matB = 0;
+        for (const t of "QRBNP") {
+          for (let k = count[t]; k < full[t]; k++) lostW += g(t);
+          for (let k = count[t.toLowerCase()]; k < full[t]; k++) lostB += g(t.toLowerCase());
+          matW += count[t] * VAL[t.toLowerCase()];
+          matB += count[t.toLowerCase()] * VAL[t.toLowerCase()];
+        }
+        $("capsW").innerHTML = `<span class="pc b" style="font-size:1.1rem">${lostB}</span> ${matW > matB ? `<small class="muted">+${matW - matB}</small>` : ""}`;
+        $("capsB").innerHTML = `<span class="pc w" style="font-size:1.1rem">${lostW}</span> ${matB > matW ? `<small class="muted">+${matB - matW}</small>` : ""}`;
+
+        const who = state.turn === "w" ? (vsCpu() ? "Aapki" : "White ki") : (vsCpu() ? "Computer ki" : "Black ki");
+        $("status").innerHTML =
+          st === "check" ? `<span class="bad">⚠️ Check! ${who} baari</span>` :
+          busy ? `<span class="muted">🤔 Computer soch raha hai...</span>` :
+          st === "play" ? `${who} baari ${state.turn === "w" ? "⚪" : "⚫"}` : "";
+      }
+
+      function tap(i) {
+        if (busy || over) return;
+        if (vsCpu() && state.turn !== "w") return;
+        sound.unlock();
+        const p = state.board[i];
+        if (sel !== null) {
+          const options = C.legalMoves(state).filter((m) => m.from === sel && m.to === i);
+          if (options.length) {
+            if (options.length > 1) return askPromo(options);
+            return play(options[0]);
+          }
+        }
+        sel = p && C.colorOf(p) === state.turn ? (sel === i ? null : i) : null;
+        render();
+      }
+
+      function askPromo(options) {
+        const row = $("promoRow");
+        row.hidden = false;
+        row.innerHTML = options.map((m, k) => `<button data-k="${k}"><span class="pc ${state.turn}">${g(m.promo)}</span></button>`).join("");
+        row.querySelectorAll("button").forEach((b) => (b.onclick = () => { row.hidden = true; hideModal(); play(options[+b.dataset.k]); }));
+        $("mTitle").textContent = "Pyaada kya banega?";
+        $("mText").textContent = "Ek mohra chuno";
+        $("mBtn").style.display = "none";
+        $("modal").classList.add("show");
+      }
+
+      function play(m) {
+        history.push({ state, last });
+        state = C.make(state, m);
+        last = m;
+        sel = null;
+        sound.beep(m.captured ? 300 : 520, 0.06, "triangle", 0.06);
+        render();
+        if (checkEnd()) return;
+        if (vsCpu() && state.turn === "b") cpuMove();
+      }
+
+      function cpuMove() {
+        busy = true;
+        render();
+        // UI update hone do, phir sochna shuru
+        setTimeout(() => {
+          const m = C.bestMove(state, +mode);
+          busy = false;
+          if (m) play(m);
+        }, 250);
+      }
+
+      function checkEnd() {
+        const st = C.status(state);
+        if (st === "check") sound.beep(880, 0.1, "square", 0.05);
+        if (st !== "mate" && st !== "stalemate" && st !== "draw") return false;
+        over = true;
+        let title;
+        if (st === "mate") {
+          const winner = state.turn === "w" ? "b" : "w";
+          title = vsCpu() ? (winner === "w" ? "🏆 Checkmate! Aap jeet gaye!" : "😢 Checkmate! Computer jeeta") : `🏆 Checkmate! ${winner === "w" ? "White" : "Black"} jeeta!`;
+          if (vsCpu() && winner === "w") store.set("chess_wins_" + mode, store.get("chess_wins_" + mode, 0) + 1);
+        } else title = st === "stalemate" ? "🤝 Stalemate — barabar!" : "🤝 Draw — sirf raja bache";
+        $("mBtn").style.display = "";
+        $("promoRow").hidden = true;
+        setTimeout(() => showModal(title, vsCpu() ? `Is level par aapki jeet: ${store.get("chess_wins_" + mode, 0)}` : "Achha khela!", "Naya game", newGame), 400);
+        return true;
+      }
+
+      $("undoBtn").addEventListener("click", () => {
+        if (busy || !history.length) return;
+        // Computer ke saath: apni aur computer dono ki chaal wapas
+        let h = history.pop();
+        if (vsCpu() && h.state.turn === "b" && history.length) h = history.pop();
+        state = h.state;
+        last = h.last;
+        sel = null;
+        over = false;
+        render();
+      });
+      $("newBtn").addEventListener("click", newGame);
+      function setMode(m) {
+        mode = m;
+        store.set("chess_mode", m);
+        document.querySelectorAll("#modeRow .btn").forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
+        newGame();
+      }
+      document.querySelectorAll("#modeRow .btn").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+      setMode(mode);
+    })();
+  </script>
+</body>
+</html>

@@ -24,7 +24,6 @@ body {
     radial-gradient(900px 500px at 10% -10%, rgba(124, 58, 237, 0.35), transparent 60%),
     radial-gradient(700px 400px at 100% 0%, rgba(236, 72, 153, 0.22), transparent 60%),
     var(--bg);
-  background-attachment: fixed;
   min-height: 100vh;
   -webkit-tap-highlight-color: transparent;
 }
@@ -40,9 +39,7 @@ button { font: inherit; color: inherit; }
   align-items: center;
   gap: 16px;
   padding: 10px clamp(14px, 4vw, 40px);
-  background: rgba(11, 12, 29, 0.72);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  background: rgba(11, 12, 29, 0.96);
   border-bottom: 1px solid var(--line);
 }
 .logo { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
@@ -57,7 +54,9 @@ button { font: inherit; color: inherit; }
   display: flex;
   align-items: center;
   gap: 8px;
-  width: min(360px, 52vw);
+  flex: 1;
+  min-width: 0;
+  max-width: 360px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -69,6 +68,7 @@ button { font: inherit; color: inherit; }
 .search input::-webkit-search-cancel-button { filter: invert(1); }
 .search kbd { font: 700 0.7rem "Segoe UI", sans-serif; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
 @media (hover: none) { .search kbd { display: none; } }
+@media (max-width: 420px) { .site-header { gap: 10px; } .logo img { width: 34px; height: 34px; } .logo-text b { font-size: 1.05rem; } }
 
 .wrap { max-width: 1180px; margin: 0 auto; padding: 18px clamp(12px, 3vw, 28px) 40px; }
 
@@ -204,6 +204,8 @@ button { font: inherit; color: inherit; }
 
 /* ---------- Sections ---------- */
 .shelf, .block { margin-top: 22px; }
+/* Screen se bahar ke sections tab tak draw na ho jab tak scroll karke na aao (fast load/scroll) */
+.block { content-visibility: auto; contain-intrinsic-size: auto 700px; }
 .shelf-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .shelf-head h2 { font-size: clamp(1.1rem, 3vw, 1.35rem); }
 .count { color: var(--muted); font-size: 0.85rem; white-space: nowrap; }
@@ -260,7 +262,6 @@ button { font: inherit; color: inherit; }
 }
 .emoji {
   font-size: clamp(2.6rem, 9vw, 3.6rem);
-  filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.4));
   transition: transform 0.25s ease;
   z-index: 1;
   white-space: nowrap;
@@ -268,7 +269,7 @@ button { font: inherit; color: inherit; }
 .card:hover .emoji { transform: scale(1.12) rotate(-6deg); }
 .card.small .emoji { font-size: 2.6rem; }
 .badges { position: absolute; top: 8px; left: 8px; display: flex; gap: 5px; z-index: 2; }
-.badge { font-size: 0.66rem; font-weight: 800; letter-spacing: 0.4px; padding: 3px 8px; border-radius: 999px; background: rgba(0, 0, 0, 0.55); color: #fff; backdrop-filter: blur(4px); }
+.badge { font-size: 0.66rem; font-weight: 800; letter-spacing: 0.4px; padding: 3px 8px; border-radius: 999px; background: rgba(0, 0, 0, 0.55); color: #fff; }
 .badge.new { background: #ef4444; }
 .info { padding: 10px 12px 12px; }
 .info h3 { font-size: 1rem; line-height: 1.2; }
@@ -295,8 +296,7 @@ button { font: inherit; color: inherit; }
   height: 32px;
   border-radius: 50%;
   border: none;
-  background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.55);
   font-size: 0.95rem;
   cursor: pointer;
   display: grid;
