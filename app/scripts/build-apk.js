@@ -33,3 +33,18 @@ fs.mkdirSync(outDir, { recursive: true });
 fs.copyFileSync(apk, path.join(outDir, "GameZone.apk"));
 const mb = (fs.statSync(apk).size / 1048576).toFixed(1);
 console.log(`\nAPK ready: download/GameZone.apk (${mb} MB)`);
+
+// version.json: purani app isse padh ke "Naya update aaya" dikhati hai (GitHub par push hone ke baad)
+const gradleFile = fs.readFileSync(path.join(APP, "android", "app", "build.gradle"), "utf8");
+const versionCode = +gradleFile.match(/versionCode (\d+)/)[1];
+const versionName = gradleFile.match(/versionName "([^"]+)"/)[1];
+const notes = JSON.parse(fs.readFileSync(path.join(APP, "release-notes.json"), "utf8")).notes;
+const info = {
+  versionCode,
+  versionName,
+  notes,
+  apk: "https://raw.githubusercontent.com/Shubhamgoyal183/Game/main/download/GameZone.apk",
+  date: new Date().toISOString().slice(0, 10),
+};
+fs.writeFileSync(path.join(APP, "..", "version.json"), JSON.stringify(info, null, 2) + "\n");
+console.log(`version.json ready: ${versionName} (code ${versionCode}) — GitHub par push karo taaki purani app ko update dikhe`);

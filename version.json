@@ -1,0 +1,11 @@
+{
+  "versionCode": 4,
+  "versionName": "1.2.0",
+  "notes": [
+    "11 naye games: Ludo, Carrom, Cricket, Saanp-Seedhi, Chess, Block Puzzle, Sudoku, Word Game, Space Shooter, Brick Breaker, Stack Tower",
+    "App ab pehle se zyada smooth chalti hai (lag kam)",
+    "Naya: app mein hi update ki khabar milegi"
+  ],
+  "apk": "https://raw.githubusercontent.com/Shubhamgoyal183/Game/main/download/GameZone.apk",
+  "date": "2026-11-02"
+}

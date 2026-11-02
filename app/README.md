@@ -14,6 +14,15 @@ Zaroori: Java 17, Android SDK (platform 34, build-tools 34). Website mein kuch b
 
 Har nayi release se pehle `android/app/build.gradle` mein `versionCode` +1 karo (aur `versionName` badlo), warna phone par update install nahi hoga.
 
+## Naya update release karna (app mein "Naya update aaya" dikhega)
+
+1. `android/app/build.gradle` mein `versionCode` +1 karo aur `versionName` badlo (jaise 1.2.0 → 1.3.0).
+2. `release-notes.json` mein likho ki kya naya hai (har line ek point).
+3. `node scripts/build-apk.js` chalao — ye `download/GameZone.apk` aur `version.json` dono banata hai.
+4. Dono GitHub par commit + push karo (`main` branch).
+
+Jinke phone mein purani app hai, unhe app kholte hi popup dikhega: "🎉 Naya update aaya!" → **Update karo** dabate hi naya APK download hota hai. App GitHub se ye file padhti hai: `https://raw.githubusercontent.com/Shubhamgoyal183/Game/main/version.json` (GitHub par 5 minute tak purani copy dikh sakti hai).
+
 ## Signing key (bahut zaroori)
 
 - `android/keystore/gamezone-release.jks` aur `android/keystore.properties` mein app ki signing key aur password hain.
